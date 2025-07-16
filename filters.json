@@ -1,6 +1,21 @@
 [
   {
-    "name": "amazon.com filter",
+    "name": "amazon.com Filter",
     "filter": "amazon.com"
+  },
+  {
+    "name": "inspiringquotes.com Filter",
+    "filter": "inspiringquotes.com",
+    "action": "Delete"
+  },
+  {
+    "name": "ziprecruiter.com Filter",
+    "filter": "ziprecruiter.com",
+    "action": "Delete"
+  },
+  {
+    "name": "redrockapps.zendesk.com Filter",
+    "filter": "redrockapps.zendesk.com",
+    "action": "Delete"
   }
 ]

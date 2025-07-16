@@ -27,9 +27,9 @@ class FilterDialog(QDialog):
                 self.filter_list.takeItem(i)
         # Optionally, refresh the filter list to remove any duplicate at the bottom
         self.refresh_filter_list()
-        # Insert a new <New Filter> at the top
+        # Insert a new <New Filter> at the bottom
         new_item = QListWidgetItem(f"{new_label}")
-        self.filter_list.insertItem(0, new_item)
+        self.filter_list.addItem(new_item)
         self.filter_list.setCurrentItem(new_item)
     filter_applied = Signal(str)  # regex string
 
@@ -43,8 +43,8 @@ class FilterDialog(QDialog):
         self.editing_index = None  # Track which filter is being edited
         self.init_ui()
         # Only generate a filter if 2 or more are selected
-        if self.selected_emails and len(self.selected_emails) > 1:
-            # Analyze the emails and generate a filter
+        if self.selected_emails and len(self.selected_emails) > 0:
+            # Analyze the emails and generate a filter for each unique domain
             domains = set()
             for email in self.selected_emails:
                 sender = email.get('from', '')
@@ -52,24 +52,27 @@ class FilterDialog(QDialog):
                 if match:
                     domains.add(match.group(1))
             if domains:
-                filter_name = f"Filter: {', '.join(domains)}"
-                regex = '|'.join(domains)
+                # Remove any existing <New Filter> or Filter: at the top
+                for i in reversed(range(self.filter_list.count())):
+                    if self.filter_list.item(i).text().startswith("<New Filter>:") or self.filter_list.item(i).text().startswith("Filter: "):
+                        self.filter_list.takeItem(i)
+                # For each domain, create a filter with the correct name
+                for domain in sorted(domains):
+                    filter_name = f"{domain} Filter"
+                    regex = domain
+                    new_label = f"{filter_name}: {regex}"
+                    new_item = QListWidgetItem(new_label)
+                    self.filter_list.insertItem(0, new_item)
+                    self.filter_list.setCurrentItem(new_item)
+                    self.name_edit.setText(filter_name)
+                    self.editing_index = None
+                    self.rule_label.setText(f"Selected Filter: {filter_name}")
+                    # Immediately add and save the generated filter if not duplicate
+                    if not any(f["name"] == filter_name and f["filter"] == regex for f in self.filters):
+                        self.filters.append({"name": filter_name, "filter": regex, "action": self.action_combo.currentText() if hasattr(self, 'action_combo') else "Delete"})
+                        self.save_filters()
             else:
-                filter_name = "New Filter"
-                regex = ''
-            # Remove any existing <New Filter> or Filter: at the top
-            for i in reversed(range(self.filter_list.count())):
-                if self.filter_list.item(i).text().startswith("<New Filter>:") or self.filter_list.item(i).text().startswith("Filter: "):
-                    self.filter_list.takeItem(i)
-            # Insert the new filter at the top
-            new_label = f"{filter_name}: {regex}"
-            new_item = QListWidgetItem(new_label)
-            self.filter_list.insertItem(0, new_item)
-            self.filter_list.setCurrentItem(new_item)
-            self.name_edit.setText(filter_name)
-            self.editing_index = None
-            self.rule_label.setText(f"Selected Filter: {filter_name}")
-            # Do NOT call refresh_filter_list here, as it would overwrite the generated filter
+                self.new_filter()
         else:
             self.new_filter()
 
@@ -128,6 +131,8 @@ class FilterDialog(QDialog):
 
         self.test_btn.clicked.connect(self.test_filter)
         self.clear_btn.clicked.connect(self.clear_filter)
+        self.save_btn.clicked.connect(self.save_filter)
+        self.delete_btn.clicked.connect(self.delete_filter)
     def clear_filter(self):
         self.name_edit.clear()
         self.rule_label.setText("Selected Filter: None")
@@ -137,6 +142,7 @@ class FilterDialog(QDialog):
             self.filter_list.clear()
             for text in self._original_filter_items:
                 self.filter_list.addItem(QListWidgetItem(text))
+        # Restore the full email list in the parent viewer
         if hasattr(self.parent(), "restore_emails"):
             self.parent().restore_emails()
         self.save_btn.clicked.connect(self.save_filter)
@@ -363,11 +369,14 @@ class EmailViewer(QWidget):
     def apply_filter_to_emails(self, regex):
         """
         Filter emails in the table by the given regex (applies to the 'From' field, extracted email address, display name, and subject).
+        Always filter from the full email cache (_emails_data_buffer).
         """
         print(f"[DEBUG] Filtering with regex: '{regex}'")
+        # Always filter from the cache
+        source_emails = self._emails_data_buffer if self._emails_data_buffer is not None else self.emails_data
         if not regex:
             print("[DEBUG] No regex provided, showing all emails.")
-            filtered_emails = self.emails_data
+            filtered_emails = list(source_emails)
         else:
             try:
                 pattern = re.compile(regex, re.IGNORECASE)
@@ -376,7 +385,7 @@ class EmailViewer(QWidget):
                 QMessageBox.warning(self, "Invalid Regex", f"The filter regex is invalid: {regex}")
                 return
             filtered_emails = []
-            for email in self.emails_data:
+            for email in source_emails:
                 from_field = str(email.get('from', ''))
                 subject_field = str(email.get('subject', ''))
                 # Extract email address from 'from' field
@@ -392,13 +401,40 @@ class EmailViewer(QWidget):
                 if from_match or email_addr_match or display_name_match or subject_match:
                     filtered_emails.append(email)
         print(f"[DEBUG] Filtered emails count: {len(filtered_emails)}")
+        self.emails_data = filtered_emails  # Update main list to match what's shown
         self.email_table.setUpdatesEnabled(False)
+        self.email_table.setSortingEnabled(False)  # Disable sorting before setting rows
+        self.email_table.clearContents()
         self.email_table.setRowCount(len(filtered_emails))
+        # Now set each row with the filtered email data
         for row_position, email in enumerate(filtered_emails):
+            print(f"[DEBUG] Setting row {row_position}: {email}")
             self.set_email_row(row_position, email)
+            # After setting, verify the value in the table matches the email dict
+            item = self.email_table.item(row_position, 0)
+            if item is not None:
+                print(f"[DEBUG] After set: Row {row_position} Col 0 Value: {item.text()} (should be: {email.get('from', '')})")
+            else:
+                print(f"[DEBUG] After set: Row {row_position} Col 0 Value: None (should be: {email.get('from', '')})")
         self.email_table.setUpdatesEnabled(True)
+        self.email_table.setSortingEnabled(True)  # Re-enable sorting
         self.email_table.sortItems(1, Qt.DescendingOrder)
         self.status_label.setText(f"Filtered: {len(filtered_emails)} emails.")
+
+    def restore_emails(self):
+        """Restore the full email list from the cache and refresh the table."""
+        if self._emails_data_buffer is not None:
+            self.emails_data = list(self._emails_data_buffer)
+            self.email_table.setUpdatesEnabled(False)
+            self.email_table.setSortingEnabled(False)
+            self.email_table.clearContents()
+            self.email_table.setRowCount(len(self.emails_data))
+            for row_position, email in enumerate(self.emails_data):
+                self.set_email_row(row_position, email)
+            self.email_table.setUpdatesEnabled(True)
+            self.email_table.setSortingEnabled(True)
+            self.email_table.sortItems(1, Qt.DescendingOrder)
+            self.status_label.setText(f"Restored: {len(self.emails_data)} emails.")
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gmail Email Viewer")
@@ -483,19 +519,30 @@ class EmailViewer(QWidget):
         dlg.exec()
 
     def set_email_row(self, row_position, email):
-        # Always pass a string to QTableWidgetItem
-        from_item = QTableWidgetItem(str(email.get('from', '')))
+        # Deep debug: print the full email dict and row index
+        print(f"[DEEPDEBUG] set_email_row({row_position}): {email}")
+        from_value = email.get('from', '')
+        if not from_value:
+            print(f"[DEEPDEBUG] WARNING: Missing 'from' for row {row_position}, email: {email}")
+        from_item = QTableWidgetItem(str(from_value))
         # Truncate timestamp after minutes
         date_str = email.get('date', '')
         match = re.search(r'^(.{16})', date_str)
         if match:
             date_str = match.group(1)
         date_item = DateTableWidgetItem(date_str)
-        subject_item = QTableWidgetItem(str(email.get('subject', '')))
+        subject_value = email.get('subject', '')
+        if not subject_value:
+            print(f"[DEEPDEBUG] WARNING: Missing 'subject' for row {row_position}, email: {email}")
+        subject_item = QTableWidgetItem(str(subject_value))
         from_item.setData(Qt.UserRole, email.get('uid'))
         self.email_table.setItem(row_position, 0, from_item)
         self.email_table.setItem(row_position, 1, date_item)
         self.email_table.setItem(row_position, 2, subject_item)
+        # Print what is actually set in the table
+        for col in range(self.email_table.columnCount()):
+            item = self.email_table.item(row_position, col)
+            print(f"[DEEPDEBUG] After set: Row {row_position} Col {col} Value: {item.text() if item else None}")
 
     @staticmethod
     def extract_html_body(msg):
@@ -520,6 +567,7 @@ class EmailViewer(QWidget):
             self.email_table.setUpdatesEnabled(False)
             self.email_table.setRowCount(len(emails))
             self.emails_data = emails
+            self._emails_data_buffer = list(emails)  # Save a cache of the full list
             for row_position, email in enumerate(emails):
                 self.set_email_row(row_position, email)
             self.email_table.setUpdatesEnabled(True)
@@ -580,8 +628,6 @@ class EmailViewer(QWidget):
             QMessageBox.information(self, "Save Filter", "New filter created.")
         if hasattr(self.parent(), "email_table"):
             self.parent().email_table.clearSelection()
-        if hasattr(self, 'email_table'):
-            self.email_table.sortItems(1, Qt.DescendingOrder)
 
     def delete_filter(self):
         selected_items = self.filter_list.selectedItems()
@@ -589,12 +635,16 @@ class EmailViewer(QWidget):
             QMessageBox.warning(self, "Delete Filter", "Please select at least one filter to delete.")
             return
         names = [item.text().split(":")[0] for item in selected_items]
+        # Remove from in-memory list
         self.filters = [f for f in self.filters if f["name"] not in names]
+        # Save to JSON
         self.save_filters()
+        # Reload from JSON to ensure sync
+        self.filters = self.load_filters()
+        # Refresh UI
         self.refresh_filter_list()
         self.update_original_filter_items()
         self.name_edit.clear()
-        self.filter_edit.clear()
         QMessageBox.information(self, "Delete Filter", f"Deleted filter(s): {', '.join(names)}.")
 
     def save_rule(self):
