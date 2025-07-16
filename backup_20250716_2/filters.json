@@ -1,0 +1,15 @@
+[
+  {
+    "name": "amazon.com filter",
+    "filter": "amazon.com"
+  },
+  {
+    "name": "inspiringquotes.com filter",
+    "filter": "@(inspiringquotes\\.com)$"
+  },
+  {
+    "name": "LinkedIn Filter",
+    "filter": "@(linkedin\\.com)$",
+    "action": "Delete"
+  }
+]
