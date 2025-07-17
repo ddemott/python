@@ -17,5 +17,10 @@
     "name": "redrockapps.zendesk.com Filter",
     "filter": "redrockapps.zendesk.com",
     "action": "Delete"
+  },
+  {
+    "name": "updates.activision.com Filter",
+    "filter": "updates.activision.com",
+    "action": "Delete"
   }
 ]

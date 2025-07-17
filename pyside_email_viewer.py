@@ -83,18 +83,18 @@ class FilterDialog(QDialog):
         self._original_filter_items = [self.filter_list.item(i).text() for i in range(self.filter_list.count())]
 
     def init_ui(self):
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Select a Filter to Edit:"))
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(QLabel("Select a Filter to Edit:"))
         new_btn = QPushButton("New Filter")
         new_btn.clicked.connect(self.new_filter)
-        layout.addWidget(new_btn)
+        main_layout.addWidget(new_btn)
         self.filter_list = QListWidget()
         self.filter_list.setDragDropMode(QListWidget.InternalMove)
         self.filter_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.filter_list.setStyleSheet("QListWidget::item { font-family: monospace; font-size: 13px; min-height: 28px; } QListWidget::item:selected { background: #0078d7; color: white; }")
         self.filter_list.itemClicked.connect(self.load_filter_for_edit)
         self.refresh_filter_list()
-        layout.addWidget(self.filter_list)
+        main_layout.addWidget(self.filter_list)
 
         name_row = QHBoxLayout()
         name_label = QLabel("Filter Name:")
@@ -102,7 +102,7 @@ class FilterDialog(QDialog):
         self.name_edit.setPlaceholderText("Enter filter name")
         name_row.addWidget(name_label)
         name_row.addWidget(self.name_edit)
-        layout.addLayout(name_row)
+        main_layout.addLayout(name_row)
 
         btn_layout = QHBoxLayout()
         self.test_btn = QPushButton("Apply Filter")
@@ -113,26 +113,201 @@ class FilterDialog(QDialog):
         btn_layout.addWidget(self.clear_btn)
         btn_layout.addWidget(self.save_btn)
         btn_layout.addWidget(self.delete_btn)
-        layout.addLayout(btn_layout)
+        main_layout.addLayout(btn_layout)
+
+        # --- New Action/Job Section ---
+        action_job_row = QHBoxLayout()
+
+        # Left: Action selection and Save Action button
+        action_col = QVBoxLayout()
+        action_label = QLabel("Select Action:")
+        self.action_combo = QComboBox()
+        self.action_combo.addItems(["Delete", "Move", "Mark Unread", "Mark Read", "Mark as Important", "Mark as Unimportant"])
+        action_col.addWidget(action_label)
+        action_col.addWidget(self.action_combo)
+        self.save_action_btn = QPushButton("Save Action")
+        self.execute_action_btn = QPushButton("Execute Action")
+        self.delete_action_btn = QPushButton("Delete Action")
+        action_col.addWidget(self.save_action_btn)
+        action_col.addWidget(self.execute_action_btn)
+        action_col.addWidget(self.delete_action_btn)
+        action_col.addStretch()
+
+        # Right: Job List
+        job_col = QVBoxLayout()
+        job_label = QLabel("Job List")
+        job_col.addWidget(job_label)
+        self.job_list = QListWidget()
+        job_col.addWidget(self.job_list)
+        job_col.addStretch()
+
+        action_job_row.addLayout(action_col)
+        action_job_row.addLayout(job_col)
+        main_layout.addLayout(action_job_row)
 
         # --- Rule Builder Section ---
         self.rule_label = QLabel("Selected Filter: None")
-        layout.addWidget(self.rule_label)
+        main_layout.addWidget(self.rule_label)
 
-        action_row = QHBoxLayout()
-        action_label = QLabel("Select Action:")
-        self.action_combo = QComboBox()
-        self.action_combo.addItems(["Delete", "Move", "Mark Unread", "Mark Read"])
-        action_row.addWidget(action_label)
-        action_row.addWidget(self.action_combo)
-        layout.addLayout(action_row)
-
-        self.setLayout(layout)
+        self.setLayout(main_layout)
 
         self.test_btn.clicked.connect(self.test_filter)
         self.clear_btn.clicked.connect(self.clear_filter)
         self.save_btn.clicked.connect(self.save_filter)
         self.delete_btn.clicked.connect(self.delete_filter)
+        self.save_action_btn.clicked.connect(self.save_action_to_job)
+        self.refresh_job_list()
+        self.execute_action_btn.clicked.connect(self.execute_selected_job)
+        self.delete_action_btn.clicked.connect(self.delete_selected_job)
+    def execute_selected_job(self):
+        selected_items = self.job_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Execute Action", "Please select a job to execute.")
+            return
+        item = selected_items[0]
+        name = item.text().split(":")[0]
+        jobs = self.load_jobs()
+        job = next((j for j in jobs if j["name"] == name), None)
+        if not job:
+            QMessageBox.warning(self, "Execute Action", "Job not found.")
+            return
+        # Apply the filter to the parent viewer (if available)
+        if hasattr(self.parent(), "apply_filter_to_emails"):
+            self.parent().apply_filter_to_emails(job["filter"])
+        QMessageBox.information(self, "Execute Action", f"Job '{name}' executed (action: {job['action']}).")
+
+    def delete_selected_job(self):
+        selected_items = self.job_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Delete Action", "Please select a job to delete.")
+            return
+        item = selected_items[0]
+        name = item.text().split(":")[0]
+        jobs = self.load_jobs()
+        job = next((j for j in jobs if j["name"] == name), None)
+        jobs = [j for j in jobs if j["name"] != name]
+        self.save_jobs(jobs)
+        self.refresh_job_list()
+        # If parent is EmailViewer, delete all emails matching this job's filter
+        if job and hasattr(self.parent(), "emails_data") and hasattr(self.parent(), "delete_emails_by_uid_list") and hasattr(self.parent(), "email_matches_regex"):
+            regex = job.get("filter", "")
+            emails_to_delete = [email for email in self.parent().emails_data if self.parent().email_matches_regex(email, regex)]
+            if emails_to_delete:
+                uid_list = [e.get('uid') for e in emails_to_delete if e.get('uid')]
+                self.parent().delete_emails_by_uid_list(uid_list)
+        QMessageBox.information(self, "Delete Action", f"Job '{name}' deleted and matching emails removed.")
+
+    def save_action_to_job(self):
+        # Save the current filter/action as a job (persistent)
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Save Action", "Please enter a filter name to save as a job.")
+            return
+        action = self.action_combo.currentText()
+        # Try to extract the regex from the selected filter list entry
+        regex = ""
+        selected_items = self.filter_list.selectedItems()
+        if selected_items:
+            item_text = selected_items[0].text()
+            if ":" in item_text:
+                regex = item_text.rsplit(":", 1)[1].strip()
+        # Load existing jobs
+        jobs = self.load_jobs()
+        # Prevent duplicate job names
+        for job in jobs:
+            if job["name"] == name:
+                QMessageBox.warning(self, "Save Action", f"A job with the name '{name}' already exists.")
+                return
+        # If action is Move, get folder list if not cached, then prompt user
+        folder = None
+        if action == "Move":
+            if not hasattr(self, '_move_folders_cache') or not self._move_folders_cache:
+                # Fetch folders from Gmail
+                try:
+                    client = GmailClient()
+                    client.load_credentials()
+                    client.connect_imap()
+                    status, folders = client.imap.list()
+                    if status == 'OK' and folders:
+                        # Parse folder names from IMAP response
+                        folder_names = []
+                        for f in folders:
+                            # f is bytes, decode and parse
+                            parts = f.decode().split(' "/" ')
+                            if len(parts) == 2:
+                                folder_names.append(parts[1].strip('"'))
+                        self._move_folders_cache = folder_names
+                    else:
+                        QMessageBox.warning(self, "Move Action", "Could not retrieve folder list from server.")
+                        return
+                except Exception as e:
+                    QMessageBox.critical(self, "Move Action", f"Failed to fetch folders: {e}")
+                    return
+            # Show folder picker dialog
+            folder, ok = self.pick_folder_dialog(self._move_folders_cache)
+            if not ok or not folder:
+                # User cancelled
+                return
+        # Save job with folder if needed
+        job = {"name": name, "filter": regex, "action": action}
+        if folder:
+            job["folder"] = folder
+        jobs.append(job)
+        self.save_jobs(jobs)
+        self.refresh_job_list()
+        QMessageBox.information(self, "Save Action", f"Job '{name}: {action}{' to ' + folder if folder else ''}' saved.")
+
+    def pick_folder_dialog(self, folders):
+        # Show a modal dialog with a list of folders, OK/Cancel
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QPushButton, QHBoxLayout, QLabel
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select Folder")
+        dlg.resize(350, 350)
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Select a folder to move emails into:"))
+        list_widget = QListWidget()
+        for folder in folders:
+            list_widget.addItem(folder)
+        layout.addWidget(list_widget)
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+        dlg.setLayout(layout)
+        result = {"ok": False, "folder": None}
+        def accept():
+            sel = list_widget.currentItem()
+            if sel:
+                result["ok"] = True
+                result["folder"] = sel.text()
+                dlg.accept()
+        def reject():
+            dlg.reject()
+        ok_btn.clicked.connect(accept)
+        cancel_btn.clicked.connect(reject)
+        if dlg.exec() == QDialog.Accepted and result["ok"]:
+            return result["folder"], True
+        return None, False
+
+    def refresh_job_list(self):
+        self.job_list.clear()
+        jobs = self.load_jobs()
+        for job in jobs:
+            self.job_list.addItem(f"{job['name']}: {job['action']}")
+
+    def load_jobs(self):
+        jobs_file = "jobs.json"
+        if os.path.exists(jobs_file):
+            with open(jobs_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+
+    def save_jobs(self, jobs):
+        jobs_file = "jobs.json"
+        with open(jobs_file, "w", encoding="utf-8") as f:
+            json.dump(jobs, f, indent=2)
     def clear_filter(self):
         self.name_edit.clear()
         self.rule_label.setText("Selected Filter: None")
@@ -231,26 +406,24 @@ class FilterDialog(QDialog):
             QMessageBox.warning(self, "Delete Filter", "Please select at least one filter to delete.")
             return
         names = [item.text().split(":")[0] for item in selected_items]
+        # Remove from in-memory list
         self.filters = [f for f in self.filters if f["name"] not in names]
+        # Save to JSON
         self.save_filters()
+        # Reload from JSON to ensure sync
+        self.filters = self.load_filters()
+        # Refresh UI
         self.refresh_filter_list()
+        self.update_original_filter_items()
         self.name_edit.clear()
-        # Removed self.filter_edit.clear() as there is no filter_edit widget
         QMessageBox.information(self, "Delete Filter", f"Deleted filter(s): {', '.join(names)}.")
 
     def refresh_filter_list(self):
         self.filter_list.clear()
         for f in self.filters:
             # Show each filter on its own line, just the name and full filter for clarity
-            # Never add any <New Filter>: placeholder
-            if f['name'].strip() == '<New Filter>':
-                continue
             item = QListWidgetItem(f"{f['name']}: {f['filter']}")
             self.filter_list.addItem(item)
-        # Also remove any lingering <New Filter>: items from the list (defensive)
-        for i in reversed(range(self.filter_list.count())):
-            if self.filter_list.item(i).text().strip().startswith('<New Filter>:'):
-                self.filter_list.takeItem(i)
         self.update_original_filter_items()
 
     def save_filter_order(self):
@@ -265,20 +438,22 @@ class FilterDialog(QDialog):
         self.filters = new_order
         self.save_filters()
 
-    def new_filter(self):
-        self.name_edit.clear()
-        self.action_combo.setCurrentIndex(0)
-        self.rule_label.setText("Selected Filter: None (New)")
-        self.editing_index = None
-        # Remove all existing temporary <New Filter>: items
-        for i in reversed(range(self.filter_list.count())):
-            if self.filter_list.item(i).text().strip().startswith('<New Filter>:'):
-                self.filter_list.takeItem(i)
-        # Optionally, refresh the filter list to remove any duplicate at the bottom
-        self.refresh_filter_list()
-        # Do NOT insert a <New Filter>: item at all
-        # Just clear selection
-        self.filter_list.clearSelection()
+    def load_filters(self):
+        if os.path.exists(FILTERS_FILE):
+            with open(FILTERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+
+    def save_filters(self):
+        try:
+            abs_path = os.path.abspath(FILTERS_FILE)
+            print(f"[DEBUG] Saving filters to: {abs_path}")
+            print(f"[DEBUG] Filters data: {json.dumps(self.filters, indent=2)}")
+            with open(FILTERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.filters, f, indent=2)
+            print("[DEBUG] Save successful.")
+        except Exception as e:
+            print(f"[ERROR] Failed to save filters: {e}")
             QMessageBox.critical(self, "Save Error", f"Failed to save filters: {e}")
 
 class DateTableWidgetItem(QTableWidgetItem):
@@ -371,6 +546,41 @@ class ManageRulesDialog(QDialog):
         self.parent.save_rules(self.rules)
 
 class EmailViewer(QWidget):
+    @staticmethod
+    def email_matches_regex(email, regex):
+        """
+        Returns True if the email matches the regex or substring in any of the relevant fields.
+        """
+        import re
+        if not regex:
+            return True
+        from_field = str(email.get('from', ''))
+        subject_field = str(email.get('subject', ''))
+        # Try to decode subject if encoded
+        try:
+            from email.header import decode_header
+            def decode_str(s):
+                parts = decode_header(s)
+                return ''.join([t[0].decode(t[1] or 'utf-8') if isinstance(t[0], bytes) else t[0] for t in parts])
+            subject_field_decoded = decode_str(subject_field)
+        except Exception:
+            subject_field_decoded = subject_field
+        email_match = re.search(r'<([^>]+)>', from_field)
+        email_addr = email_match.group(1) if email_match else from_field
+        display_name = from_field.split('<')[0].strip() if '<' in from_field else from_field
+        # Substring match (case-insensitive)
+        for field in [from_field, email_addr, display_name, subject_field_decoded]:
+            if regex.lower() in field.lower():
+                return True
+        # Regex match (case-insensitive)
+        try:
+            pattern = re.compile(regex, re.IGNORECASE)
+        except re.error:
+            return False
+        for field in [from_field, email_addr, display_name, subject_field_decoded]:
+            if pattern.search(field):
+                return True
+        return False
     def delete_selected_emails(self):
         selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
         if not selected_rows:
@@ -465,52 +675,48 @@ class EmailViewer(QWidget):
         Always filter from the full email cache (_emails_data_buffer).
         """
         print(f"[DEBUG] Filtering with regex: '{regex}'")
-        # Always filter from the cache
         source_emails = self._emails_data_buffer if self._emails_data_buffer is not None else self.emails_data
-        if not regex:
-            print("[DEBUG] No regex provided, showing all emails.")
-            filtered_emails = list(source_emails)
-        else:
-            try:
-                pattern = re.compile(regex, re.IGNORECASE)
-            except re.error:
-                print(f"[ERROR] Invalid regex: {regex}")
-                QMessageBox.warning(self, "Invalid Regex", f"The filter regex is invalid: {regex}")
-                return
-            filtered_emails = []
-            for email in source_emails:
-                from_field = str(email.get('from', ''))
-                subject_field = str(email.get('subject', ''))
-                # Extract email address from 'from' field
-                email_match = re.search(r'<([^>]+)>', from_field)
-                email_addr = email_match.group(1) if email_match else from_field
-                # Extract display name (before <)
-                display_name = from_field.split('<')[0].strip() if '<' in from_field else from_field
+        filtered_emails = []
+        for email in source_emails:
+            match = EmailViewer.email_matches_regex(email, regex)
+            # For debug parity with old code:
+            from_field = str(email.get('from', ''))
+            subject_field = str(email.get('subject', ''))
+            email_match = re.search(r'<([^>]+)>', from_field)
+            email_addr = email_match.group(1) if email_match else from_field
+            display_name = from_field.split('<')[0].strip() if '<' in from_field else from_field
+            if regex:
+                try:
+                    pattern = re.compile(regex, re.IGNORECASE)
+                except re.error:
+                    print(f"[ERROR] Invalid regex: {regex}")
+                    QMessageBox.warning(self, "Invalid Regex", f"The filter regex is invalid: {regex}")
+                    return
                 from_match = pattern.search(from_field)
                 email_addr_match = pattern.search(email_addr)
                 display_name_match = pattern.search(display_name)
                 subject_match = pattern.search(subject_field)
-                print(f"[DEBUG] Email FROM: '{from_field}' | EMAIL: '{email_addr}' | DISPLAY: '{display_name}' | SUBJECT: '{subject_field}' | from_match: {from_match is not None} | email_addr_match: {email_addr_match is not None} | display_name_match: {display_name_match is not None} | subject_match: {subject_match is not None}")
-                if from_match or email_addr_match or display_name_match or subject_match:
-                    filtered_emails.append(email)
+            else:
+                from_match = email_addr_match = display_name_match = subject_match = True
+            print(f"[DEBUG] Email FROM: '{from_field}' | EMAIL: '{email_addr}' | DISPLAY: '{display_name}' | SUBJECT: '{subject_field}' | from_match: {from_match is not None} | email_addr_match: {email_addr_match is not None} | display_name_match: {display_name_match is not None} | subject_match: {subject_match is not None}")
+            if match:
+                filtered_emails.append(email)
         print(f"[DEBUG] Filtered emails count: {len(filtered_emails)}")
-        self.emails_data = filtered_emails  # Update main list to match what's shown
+        self.emails_data = filtered_emails
         self.email_table.setUpdatesEnabled(False)
-        self.email_table.setSortingEnabled(False)  # Disable sorting before setting rows
+        self.email_table.setSortingEnabled(False)
         self.email_table.clearContents()
         self.email_table.setRowCount(len(filtered_emails))
-        # Now set each row with the filtered email data
         for row_position, email in enumerate(filtered_emails):
             print(f"[DEBUG] Setting row {row_position}: {email}")
             self.set_email_row(row_position, email)
-            # After setting, verify the value in the table matches the email dict
             item = self.email_table.item(row_position, 0)
             if item is not None:
                 print(f"[DEBUG] After set: Row {row_position} Col 0 Value: {item.text()} (should be: {email.get('from', '')})")
             else:
                 print(f"[DEBUG] After set: Row {row_position} Col 0 Value: None (should be: {email.get('from', '')})")
         self.email_table.setUpdatesEnabled(True)
-        self.email_table.setSortingEnabled(True)  # Re-enable sorting
+        self.email_table.setSortingEnabled(True)
         self.email_table.sortItems(1, Qt.DescendingOrder)
         self.status_label.setText(f"Filtered: {len(filtered_emails)} emails.")
 
@@ -680,7 +886,7 @@ class EmailViewer(QWidget):
             self.client = GmailClient()
             self.client.load_credentials()
             self.client.connect_imap()
-            emails = self.client.list_emails(limit=100)  # Load up to 100 emails for speed
+            emails = self.client.list_emails(limit=1000)  # Load up to 100 emails for speed
             self.email_table.setUpdatesEnabled(False)
             self.email_table.setRowCount(len(emails))
             self.emails_data = emails
