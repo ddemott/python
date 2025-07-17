@@ -242,8 +242,15 @@ class FilterDialog(QDialog):
         self.filter_list.clear()
         for f in self.filters:
             # Show each filter on its own line, just the name and full filter for clarity
+            # Never add any <New Filter>: placeholder
+            if f['name'].strip() == '<New Filter>':
+                continue
             item = QListWidgetItem(f"{f['name']}: {f['filter']}")
             self.filter_list.addItem(item)
+        # Also remove any lingering <New Filter>: items from the list (defensive)
+        for i in reversed(range(self.filter_list.count())):
+            if self.filter_list.item(i).text().strip().startswith('<New Filter>:'):
+                self.filter_list.takeItem(i)
         self.update_original_filter_items()
 
     def save_filter_order(self):
@@ -258,22 +265,20 @@ class FilterDialog(QDialog):
         self.filters = new_order
         self.save_filters()
 
-    def load_filters(self):
-        if os.path.exists(FILTERS_FILE):
-            with open(FILTERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return []
-
-    def save_filters(self):
-        try:
-            abs_path = os.path.abspath(FILTERS_FILE)
-            print(f"[DEBUG] Saving filters to: {abs_path}")
-            print(f"[DEBUG] Filters data: {json.dumps(self.filters, indent=2)}")
-            with open(FILTERS_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.filters, f, indent=2)
-            print("[DEBUG] Save successful.")
-        except Exception as e:
-            print(f"[ERROR] Failed to save filters: {e}")
+    def new_filter(self):
+        self.name_edit.clear()
+        self.action_combo.setCurrentIndex(0)
+        self.rule_label.setText("Selected Filter: None (New)")
+        self.editing_index = None
+        # Remove all existing temporary <New Filter>: items
+        for i in reversed(range(self.filter_list.count())):
+            if self.filter_list.item(i).text().strip().startswith('<New Filter>:'):
+                self.filter_list.takeItem(i)
+        # Optionally, refresh the filter list to remove any duplicate at the bottom
+        self.refresh_filter_list()
+        # Do NOT insert a <New Filter>: item at all
+        # Just clear selection
+        self.filter_list.clearSelection()
             QMessageBox.critical(self, "Save Error", f"Failed to save filters: {e}")
 
 class DateTableWidgetItem(QTableWidgetItem):
@@ -366,6 +371,94 @@ class ManageRulesDialog(QDialog):
         self.parent.save_rules(self.rules)
 
 class EmailViewer(QWidget):
+    def delete_selected_emails(self):
+        selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
+        if not selected_rows:
+            self.status_label.setText("No emails selected to delete.")
+            return
+        uids_to_delete = []
+        for row in selected_rows:
+            uid = self.email_table.item(row, 0).data(Qt.UserRole)
+            if uid:
+                uids_to_delete.append(uid)
+        if not uids_to_delete:
+            self.status_label.setText("No valid UIDs found for deletion.")
+            return
+        # Confirm deletion
+        reply = QMessageBox.question(self, "Delete Emails", f"Are you sure you want to delete {len(uids_to_delete)} selected email(s)? This cannot be undone.", QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        # Delete from server
+        try:
+            self.client = GmailClient()
+            self.client.load_credentials()
+            self.client.connect_imap()
+            if hasattr(self.client, 'imap') and self.client.imap:
+                self.client.imap.select('INBOX')
+                for uid in uids_to_delete:
+                    # Gmail IMAP expects UID as integer or string, and must use the UID command
+                    if isinstance(uid, bytes):
+                        uid_str = uid.decode()
+                    else:
+                        uid_str = str(uid)
+                    print(f"[DEBUG] Deleting UID: {uid_str}")
+                    # Use the UID command for Gmail IMAP
+                    result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'\Deleted')
+                    print(f"[DEBUG] IMAP uid STORE result: {result}, data: {data}")
+                    if result != 'OK':
+                        raise Exception(f"IMAP UID STORE failed for UID {uid_str}: {data}")
+                self.client.imap.expunge()
+        except Exception as e:
+            self.status_label.setText(f"Error deleting emails: {e}")
+            return
+        finally:
+            if self.client:
+                self.client.logout()
+        # Remove from in-memory lists and update the table (no server reload)
+        self.emails_data = [e for e in self.emails_data if e.get('uid') not in uids_to_delete]
+        if self._emails_data_buffer is not None:
+            self._emails_data_buffer = [e for e in self._emails_data_buffer if e.get('uid') not in uids_to_delete]
+        # Update table to reflect new in-memory list
+        self.email_table.setUpdatesEnabled(False)
+        self.email_table.setSortingEnabled(False)
+        self.email_table.clearContents()
+        self.email_table.setRowCount(len(self.emails_data))
+        for row_position, email in enumerate(self.emails_data):
+            self.set_email_row(row_position, email)
+        self.email_table.setUpdatesEnabled(True)
+        self.email_table.setSortingEnabled(True)
+        self.email_table.sortItems(1, Qt.DescendingOrder)
+        self.status_label.setText(f"Deleted {len(uids_to_delete)} email(s).")
+    def read_selected_emails(self):
+        selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
+        if not selected_rows:
+            self.status_label.setText("No emails selected to read.")
+            return
+        for row in selected_rows:
+            uid = self.email_table.item(row, 0).data(Qt.UserRole)
+            if not uid:
+                continue
+            email_info = next((e for e in self.emails_data if e.get('uid') == uid), None)
+            if not email_info:
+                continue
+            try:
+                self.client = GmailClient()
+                self.client.load_credentials()
+                self.client.connect_imap()
+                if hasattr(self.client, 'imap') and self.client.imap:
+                    self.client.imap.select('INBOX')
+                msg = self.client._fetch_email(uid.encode())
+                html_body = self.extract_html_body(msg)
+                import tempfile, webbrowser
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8") as f:
+                    f.write(html_body)
+                    temp_path = f.name
+                webbrowser.open(temp_path)
+            except Exception as e:
+                self.status_label.setText(f"Error displaying email: {e}")
+            finally:
+                if self.client:
+                    self.client.logout()
     def apply_filter_to_emails(self, regex):
         """
         Filter emails in the table by the given regex (applies to the 'From' field, extracted email address, display name, and subject).
@@ -452,6 +545,26 @@ class EmailViewer(QWidget):
         top_btn_bar.addWidget(self.load_emails_btn)
         top_btn_bar.addWidget(self.create_filters_btn)
         top_btn_bar.addWidget(self.manage_filters_btn)
+
+        # Add vertical bar (QFrame) after Manage Filters button
+        from PySide6.QtWidgets import QFrame
+        vline = QFrame()
+        vline.setFrameShape(QFrame.VLine)
+        vline.setFrameShadow(QFrame.Sunken)
+        top_btn_bar.addWidget(vline)
+
+        # Add action buttons after the vertical bar
+        self.read_btn = QPushButton("Read")
+        self.forward_btn = QPushButton("Forward")
+        self.move_btn = QPushButton("Move")
+        self.delete_btn = QPushButton("Delete")
+        self.mark_read_btn = QPushButton("Mark as Read")
+        self.mark_unread_btn = QPushButton("Mark as Unread")
+        self.mark_important_btn = QPushButton("Mark as Important")
+        self.mark_unimportant_btn = QPushButton("Mark as Unimportant")
+        for btn in [self.read_btn, self.forward_btn, self.move_btn, self.delete_btn, self.mark_read_btn, self.mark_unread_btn, self.mark_important_btn, self.mark_unimportant_btn]:
+            top_btn_bar.addWidget(btn)
+
         top_btn_bar.addStretch()
         layout.addLayout(top_btn_bar)
 
@@ -498,6 +611,10 @@ class EmailViewer(QWidget):
         self.manage_filters_btn.clicked.connect(self.open_manage_filters)
         self.save_rule_btn.clicked.connect(self.save_rule)
         self.manage_rules_btn.clicked.connect(self.open_manage_rules)
+
+        # Action button connections
+        self.read_btn.clicked.connect(self.read_selected_emails)
+        self.delete_btn.clicked.connect(self.delete_selected_emails)
 
         # Double-click on email row opens in browser
         self.email_table.doubleClicked.connect(self.show_email_in_browser)
