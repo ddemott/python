@@ -36,7 +36,7 @@ class FilterDialog(QDialog):
     def __init__(self, parent, selected_emails):
         super().__init__(parent)
         self.setWindowTitle("Filters")
-        self.resize(700, 300)
+        self.resize(1050, 450)  # 50% bigger than 700x300
         self.selected_emails = selected_emails
         self.filters = self.load_filters()
         self._original_filter_items = None  # For restoring filter list
@@ -82,6 +82,7 @@ class FilterDialog(QDialog):
     def update_original_filter_items(self):
         self._original_filter_items = [self.filter_list.item(i).text() for i in range(self.filter_list.count())]
 
+
     def init_ui(self):
         main_layout = QVBoxLayout()
         main_layout.addWidget(QLabel("Select a Filter to Edit:"))
@@ -104,16 +105,27 @@ class FilterDialog(QDialog):
         name_row.addWidget(self.name_edit)
         main_layout.addLayout(name_row)
 
+        regex_row = QHBoxLayout()
+        regex_label = QLabel("Regex:")
+        self.regex_edit = QLineEdit()
+        self.regex_edit.setPlaceholderText("Enter filter regex")
+        regex_row.addWidget(regex_label)
+        regex_row.addWidget(self.regex_edit)
+        main_layout.addLayout(regex_row)
+
         btn_layout = QHBoxLayout()
         self.test_btn = QPushButton("Apply Filter")
         self.clear_btn = QPushButton("Clear Filter")
         self.save_btn = QPushButton("Save Filter")
+        self.edit_btn = QPushButton("Edit Filter")
         self.delete_btn = QPushButton("Delete Filter")
         btn_layout.addWidget(self.test_btn)
         btn_layout.addWidget(self.clear_btn)
         btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.edit_btn)
         btn_layout.addWidget(self.delete_btn)
         main_layout.addLayout(btn_layout)
+
 
         # --- New Action/Job Section ---
         action_job_row = QHBoxLayout()
@@ -154,27 +166,148 @@ class FilterDialog(QDialog):
         self.test_btn.clicked.connect(self.test_filter)
         self.clear_btn.clicked.connect(self.clear_filter)
         self.save_btn.clicked.connect(self.save_filter)
+        self.edit_btn.clicked.connect(self.edit_filter)
         self.delete_btn.clicked.connect(self.delete_filter)
         self.save_action_btn.clicked.connect(self.save_action_to_job)
         self.refresh_job_list()
         self.execute_action_btn.clicked.connect(self.execute_selected_job)
         self.delete_action_btn.clicked.connect(self.delete_selected_job)
-    def execute_selected_job(self):
-        selected_items = self.job_list.selectedItems()
+
+    def edit_filter(self):
+        """
+        Open a dialog to edit all aspects of the selected filter (name, regex, action).
+        """
+        selected_items = self.filter_list.selectedItems()
         if not selected_items:
+            QMessageBox.warning(self, "Edit Filter", "Please select a filter to edit.")
+            return
+        item = selected_items[0]
+        name = item.text().split(":")[0]
+        # Find the filter in self.filters
+        for idx, f in enumerate(self.filters):
+            if f["name"] == name:
+                # Open a dialog for editing
+                dlg = QDialog(self)
+                dlg.setWindowTitle("Edit Filter")
+                dlg.resize(400, 200)
+                layout = QVBoxLayout()
+
+                name_row = QHBoxLayout()
+                name_label = QLabel("Filter Name:")
+                name_edit = QLineEdit(f["name"])
+                name_row.addWidget(name_label)
+                name_row.addWidget(name_edit)
+                layout.addLayout(name_row)
+
+                regex_row = QHBoxLayout()
+                regex_label = QLabel("Regex:")
+                regex_edit = QLineEdit(f["filter"])
+                regex_row.addWidget(regex_label)
+                regex_row.addWidget(regex_edit)
+                layout.addLayout(regex_row)
+
+                action_row = QHBoxLayout()
+                action_label = QLabel("Action:")
+                action_combo = QComboBox()
+                action_combo.addItems(["Delete", "Move", "Mark Unread", "Mark Read", "Mark as Important", "Mark as Unimportant"])
+                if "action" in f:
+                    action_combo.setCurrentText(f["action"])
+                action_row.addWidget(action_label)
+                action_row.addWidget(action_combo)
+                layout.addLayout(action_row)
+
+                btn_row = QHBoxLayout()
+                save_btn = QPushButton("Save")
+                cancel_btn = QPushButton("Cancel")
+                btn_row.addWidget(save_btn)
+                btn_row.addWidget(cancel_btn)
+                layout.addLayout(btn_row)
+
+                dlg.setLayout(layout)
+
+                def save_clicked():
+                    new_name = name_edit.text().strip()
+                    new_regex = regex_edit.text().strip()
+                    new_action = action_combo.currentText()
+                    if not new_name:
+                        QMessageBox.warning(dlg, "Edit Filter", "Filter name cannot be empty.")
+                        return
+                    if not new_regex:
+                        QMessageBox.warning(dlg, "Edit Filter", "Regex cannot be empty.")
+                        return
+                    # Prevent duplicate names (except for this filter)
+                    for j, other in enumerate(self.filters):
+                        if j != idx and other["name"] == new_name:
+                            QMessageBox.warning(dlg, "Edit Filter", f"A filter with the name '{new_name}' already exists.")
+                            return
+                    self.filters[idx]["name"] = new_name
+                    self.filters[idx]["filter"] = new_regex
+                    self.filters[idx]["action"] = new_action
+                    self.save_filters()
+                    self.refresh_filter_list()
+                    self.update_original_filter_items()
+                    QMessageBox.information(dlg, "Edit Filter", "Filter updated.")
+                    self.editing_index = None
+                    dlg.accept()
+
+                save_btn.clicked.connect(save_clicked)
+                cancel_btn.clicked.connect(dlg.reject)
+                dlg.exec()
+                return
+        QMessageBox.warning(self, "Edit Filter", "Could not find the selected filter to edit.")
+    def execute_selected_job(self):
+        print("[DEEPDEBUG] execute_selected_job called")
+        selected_items = self.job_list.selectedItems()
+        print(f"[DEEPDEBUG] Selected items: {selected_items}")
+        if not selected_items:
+            print("[DEEPDEBUG] No job selected")
             QMessageBox.warning(self, "Execute Action", "Please select a job to execute.")
             return
         item = selected_items[0]
         name = item.text().split(":")[0]
+        print(f"[DEEPDEBUG] Selected job name: {name}")
         jobs = self.load_jobs()
+        print(f"[DEEPDEBUG] Loaded jobs: {jobs}")
         job = next((j for j in jobs if j["name"] == name), None)
+        print(f"[DEEPDEBUG] Matched job: {job}")
         if not job:
+            print("[DEEPDEBUG] Job not found")
             QMessageBox.warning(self, "Execute Action", "Job not found.")
             return
-        # Apply the filter to the parent viewer (if available)
-        if hasattr(self.parent(), "apply_filter_to_emails"):
-            self.parent().apply_filter_to_emails(job["filter"])
-        QMessageBox.information(self, "Execute Action", f"Job '{name}' executed (action: {job['action']}).")
+        parent = self.parent()
+        print(f"[DEEPDEBUG] Parent: {parent}")
+        if job["action"] == "Delete" and hasattr(parent, "emails_data") and hasattr(parent, "email_matches_regex"):
+            regex = job.get("filter", "")
+            print(f"[DEEPDEBUG] Job action is Delete, regex: {regex}")
+            emails_data = getattr(parent, "emails_data", None)
+            print(f"[DEEPDEBUG] Parent emails_data: {emails_data}")
+            emails_to_delete = [email for email in emails_data if parent.email_matches_regex(email, regex)] if emails_data else []
+            print(f"[DEEPDEBUG] Emails to delete: {emails_to_delete}")
+            if emails_to_delete:
+                uid_list = [e.get('uid') for e in emails_to_delete if e.get('uid')]
+                print(f"[DEEPDEBUG] UID list to delete: {uid_list}")
+                # Use EmailManager's batch permanent delete
+                try:
+                    from email_manager import EmailManager
+                    manager = EmailManager()
+                    print("[DEEPDEBUG] Batch permanent delete called via EmailManager.")
+                    manager.delete_emails_by_uid_list(uid_list, permanent=True)
+                    # Optionally, update UI or remove emails from view
+                    if hasattr(parent, "remove_emails_by_uid_list"):
+                        parent.remove_emails_by_uid_list(uid_list)
+                except Exception as e:
+                    print(f"[ERROR] Permanent delete failed: {e}")
+                    QMessageBox.critical(self, "Permanent Delete Error", f"Failed to permanently delete emails: {e}")
+                    return
+            else:
+                print("[DEEPDEBUG] No emails matched for deletion")
+            QMessageBox.information(self, "Execute Action", f"Job '{name}' executed and matching emails permanently deleted.")
+        else:
+            print(f"[DEEPDEBUG] Job action is not Delete or parent missing required attributes. Action: {job['action']}")
+            if hasattr(parent, "apply_filter_to_emails"):
+                print(f"[DEEPDEBUG] Applying filter visually: {job['filter']}")
+                parent.apply_filter_to_emails(job["filter"])
+            QMessageBox.information(self, "Execute Action", f"Job '{name}' executed (action: {job['action']}).")
 
     def delete_selected_job(self):
         selected_items = self.job_list.selectedItems()
@@ -211,6 +344,9 @@ class FilterDialog(QDialog):
             item_text = selected_items[0].text()
             if ":" in item_text:
                 regex = item_text.rsplit(":", 1)[1].strip()
+        if not regex:
+            QMessageBox.warning(self, "Save Action", "Please select a filter with a non-empty regex before saving a job.")
+            return
         # Load existing jobs
         jobs = self.load_jobs()
         # Prevent duplicate job names
@@ -343,6 +479,7 @@ class FilterDialog(QDialog):
         for idx, f in enumerate(self.filters):
             if f["name"] == name:
                 self.name_edit.setText(f["name"])
+                self.regex_edit.setText(f["filter"])
                 self.editing_index = idx
                 self.rule_label.setText(f"Selected Filter: {name}")
                 if "action" in f:
@@ -546,6 +683,90 @@ class ManageRulesDialog(QDialog):
         self.parent.save_rules(self.rules)
 
 class EmailViewer(QWidget):
+    def delete_emails_by_uid_list(self, uid_list, permanent=False):
+        print(f"[DEEPDEBUG] delete_emails_by_uid_list called with: {uid_list}, permanent={permanent}")
+        if not uid_list:
+            print("[DEEPDEBUG] No UIDs provided to delete_emails_by_uid_list")
+            return
+        def to_ascii(uid):
+            # Ensure UID is a string of digits only
+            if isinstance(uid, bytes):
+                uid = uid.decode('ascii')
+            return str(uid).strip()
+        try:
+            self.client = GmailClient()
+            self.client.load_credentials()
+            self.client.connect_imap()
+            if hasattr(self.client, 'imap') and self.client.imap:
+                trash_mailbox = '[Gmail]/Trash'
+                # Always select INBOX before any COPY or STORE
+                sel_result, sel_data = self.client.imap.select('INBOX')
+                print(f"[DEBUG] SELECT INBOX (before COPY): {sel_result}, {sel_data}")
+                if permanent:
+                    print(f"[DEBUG] Permanent delete: moving to Trash, then expunging in Trash.")
+                    for uid in uid_list:
+                        uid_str = to_ascii(uid)
+                        result, data = self.client.imap.uid('COPY', uid_str, trash_mailbox)
+                        print(f"[DEBUG] COPY UID {uid_str} to Trash: {result}, {data}")
+                        if result != 'OK':
+                            raise Exception(f"IMAP UID COPY to Trash failed for UID {uid_str}: {data}")
+                    # INBOX is already selected
+                    for uid in uid_list:
+                        uid_str = to_ascii(uid)
+                        result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', '(\\Deleted)')
+                        print(f"[DEBUG] STORE (INBOX) UID {uid_str}: {result}, {data}")
+                    expunge_result, expunge_data = self.client.imap.expunge()
+                    print(f"[DEBUG] EXPUNGE INBOX: {expunge_result}, {expunge_data}")
+                    sel_result, sel_data = self.client.imap.select(trash_mailbox)
+                    print(f"[DEBUG] SELECT Trash: {sel_result}, {sel_data}")
+                    for uid in uid_list:
+                        uid_str = to_ascii(uid)
+                        result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', '(\\Deleted)')
+                        print(f"[DEBUG] STORE (Trash) UID {uid_str}: {result}, {data}")
+                    expunge_result, expunge_data = self.client.imap.expunge()
+                    print(f"[DEBUG] EXPUNGE Trash: {expunge_result}, {expunge_data}")
+                else:
+                    print(f"[DEBUG] Standard delete: moving to Trash only.")
+                    for uid in uid_list:
+                        uid_str = to_ascii(uid)
+                        result, data = self.client.imap.uid('COPY', uid_str, trash_mailbox)
+                        print(f"[DEBUG] COPY UID {uid_str} to Trash: {result}, {data}")
+                        if result != 'OK':
+                            raise Exception(f"IMAP UID COPY to Trash failed for UID {uid_str}: {data}")
+                    # INBOX is already selected
+                    for uid in uid_list:
+                        uid_str = to_ascii(uid)
+                        result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
+                        print(f"[DEBUG] STORE (INBOX) UID {uid_str}: {result}, {data}")
+                    expunge_result, expunge_data = self.client.imap.expunge()
+                    print(f"[DEBUG] EXPUNGE INBOX: {expunge_result}, {expunge_data}")
+        except Exception as e:
+            print(f"[ERROR] Exception during delete_emails_by_uid_list: {e}")
+            raise
+        finally:
+            if hasattr(self, 'client') and self.client:
+                self.client.logout()
+        # Remove from in-memory lists
+        ascii_uid_list = [to_ascii(u) for u in uid_list]
+        self.emails_data = [e for e in self.emails_data if to_ascii(e.get('uid')) not in ascii_uid_list]
+        if self._emails_data_buffer is not None:
+            self._emails_data_buffer = [e for e in self._emails_data_buffer if to_ascii(e.get('uid')) not in ascii_uid_list]
+        else:
+            self._emails_data_buffer = [e for e in self.emails_data]
+        print(f"[DEBUG] After deletion, emails_data: {self.emails_data}")
+        print(f"[DEBUG] After deletion, _emails_data_buffer: {self._emails_data_buffer}")
+        if hasattr(self, 'email_table'):
+            self.email_table.setUpdatesEnabled(False)
+            self.email_table.setSortingEnabled(False)
+            self.email_table.clearContents()
+            self.email_table.setRowCount(len(self.emails_data))
+            for row_position, email in enumerate(self.emails_data):
+                self.set_email_row(row_position, email)
+            self.email_table.setUpdatesEnabled(True)
+            self.email_table.setSortingEnabled(True)
+            self.email_table.sortItems(1, Qt.DescendingOrder)
+        if hasattr(self, 'status_label'):
+            self.status_label.setText(f"Deleted {len(uid_list)} email(s) via job.")
     @staticmethod
     def email_matches_regex(email, regex):
         """
@@ -581,63 +802,33 @@ class EmailViewer(QWidget):
             if pattern.search(field):
                 return True
         return False
-    def delete_selected_emails(self):
+    def delete_selected_emails(self, permanent=False):
+        print("[DEEPDEBUG] delete_selected_emails called")
         selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
+        print(f"[DEEPDEBUG] Selected rows: {selected_rows}")
         if not selected_rows:
+            print("[DEEPDEBUG] No emails selected to delete.")
             self.status_label.setText("No emails selected to delete.")
             return
         uids_to_delete = []
         for row in selected_rows:
             uid = self.email_table.item(row, 0).data(Qt.UserRole)
+            print(f"[DEEPDEBUG] Row {row} UID: {uid}")
             if uid:
                 uids_to_delete.append(uid)
+        print(f"[DEEPDEBUG] UIDs to delete: {uids_to_delete}")
         if not uids_to_delete:
+            print("[DEEPDEBUG] No valid UIDs found for deletion.")
             self.status_label.setText("No valid UIDs found for deletion.")
             return
         # Confirm deletion
         reply = QMessageBox.question(self, "Delete Emails", f"Are you sure you want to delete {len(uids_to_delete)} selected email(s)? This cannot be undone.", QMessageBox.Yes | QMessageBox.No)
+        print(f"[DEEPDEBUG] User confirmation reply: {reply}")
         if reply != QMessageBox.Yes:
+            print("[DEEPDEBUG] User cancelled deletion.")
             return
-        # Delete from server
-        try:
-            self.client = GmailClient()
-            self.client.load_credentials()
-            self.client.connect_imap()
-            if hasattr(self.client, 'imap') and self.client.imap:
-                self.client.imap.select('INBOX')
-                for uid in uids_to_delete:
-                    # Gmail IMAP expects UID as integer or string, and must use the UID command
-                    if isinstance(uid, bytes):
-                        uid_str = uid.decode()
-                    else:
-                        uid_str = str(uid)
-                    print(f"[DEBUG] Deleting UID: {uid_str}")
-                    # Use the UID command for Gmail IMAP
-                    result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'\Deleted')
-                    print(f"[DEBUG] IMAP uid STORE result: {result}, data: {data}")
-                    if result != 'OK':
-                        raise Exception(f"IMAP UID STORE failed for UID {uid_str}: {data}")
-                self.client.imap.expunge()
-        except Exception as e:
-            self.status_label.setText(f"Error deleting emails: {e}")
-            return
-        finally:
-            if self.client:
-                self.client.logout()
-        # Remove from in-memory lists and update the table (no server reload)
-        self.emails_data = [e for e in self.emails_data if e.get('uid') not in uids_to_delete]
-        if self._emails_data_buffer is not None:
-            self._emails_data_buffer = [e for e in self._emails_data_buffer if e.get('uid') not in uids_to_delete]
-        # Update table to reflect new in-memory list
-        self.email_table.setUpdatesEnabled(False)
-        self.email_table.setSortingEnabled(False)
-        self.email_table.clearContents()
-        self.email_table.setRowCount(len(self.emails_data))
-        for row_position, email in enumerate(self.emails_data):
-            self.set_email_row(row_position, email)
-        self.email_table.setUpdatesEnabled(True)
-        self.email_table.setSortingEnabled(True)
-        self.email_table.sortItems(1, Qt.DescendingOrder)
+        # Move to Trash and optionally expunge for permanent delete
+        self.delete_emails_by_uid_list(uids_to_delete, permanent=permanent)
         self.status_label.setText(f"Deleted {len(uids_to_delete)} email(s).")
     def read_selected_emails(self):
         selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
@@ -764,11 +955,12 @@ class EmailViewer(QWidget):
         self.forward_btn = QPushButton("Forward")
         self.move_btn = QPushButton("Move")
         self.delete_btn = QPushButton("Delete")
+        self.perm_delete_btn = QPushButton("Permanent Delete")
         self.mark_read_btn = QPushButton("Mark as Read")
         self.mark_unread_btn = QPushButton("Mark as Unread")
         self.mark_important_btn = QPushButton("Mark as Important")
         self.mark_unimportant_btn = QPushButton("Mark as Unimportant")
-        for btn in [self.read_btn, self.forward_btn, self.move_btn, self.delete_btn, self.mark_read_btn, self.mark_unread_btn, self.mark_important_btn, self.mark_unimportant_btn]:
+        for btn in [self.read_btn, self.forward_btn, self.move_btn, self.delete_btn, self.perm_delete_btn, self.mark_read_btn, self.mark_unread_btn, self.mark_important_btn, self.mark_unimportant_btn]:
             top_btn_bar.addWidget(btn)
 
         top_btn_bar.addStretch()
@@ -821,6 +1013,7 @@ class EmailViewer(QWidget):
         # Action button connections
         self.read_btn.clicked.connect(self.read_selected_emails)
         self.delete_btn.clicked.connect(self.delete_selected_emails)
+        self.perm_delete_btn.clicked.connect(lambda: self.delete_selected_emails(permanent=True))
 
         # Double-click on email row opens in browser
         self.email_table.doubleClicked.connect(self.show_email_in_browser)
@@ -880,7 +1073,19 @@ class EmailViewer(QWidget):
         return "<pre>" + (payload.decode(errors="ignore") if payload else "No HTML content.") + "</pre>"
 
     def load_emails(self):
-        self.status_label.setText("Loading emails...")
+        # Animated loading dots
+        from PySide6.QtCore import QTimer
+        self._loading_anim_timer = getattr(self, '_loading_anim_timer', None)
+        self._loading_anim_count = 0
+        def animate_loading():
+            dots = '.' * (self._loading_anim_count % 4)
+            self.status_label.setText(f"Loading{dots}")
+            self._loading_anim_count += 1
+        if not hasattr(self, '_loading_anim_timer') or self._loading_anim_timer is None:
+            self._loading_anim_timer = QTimer(self)
+            self._loading_anim_timer.timeout.connect(animate_loading)
+        self._loading_anim_count = 0
+        self._loading_anim_timer.start(500)  # 500ms per frame
         QApplication.processEvents()
         try:
             self.client = GmailClient()
@@ -903,6 +1108,10 @@ class EmailViewer(QWidget):
         finally:
             if self.client:
                 self.client.logout()
+            # Stop animation
+            if hasattr(self, '_loading_anim_timer') and self._loading_anim_timer is not None:
+                self._loading_anim_timer.stop()
+                self._loading_anim_count = 0
 
     def get_selected_emails(self):
         selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())

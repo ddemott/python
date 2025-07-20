@@ -1,5 +1,10 @@
 [
   {
+    "name": "g.factor75.com Filter",
+    "filter": "g.factor75.com",
+    "action": "Delete"
+  },
+  {
     "name": "inspiringquotes.com Filter",
     "filter": "inspiringquotes.com",
     "action": "Delete"

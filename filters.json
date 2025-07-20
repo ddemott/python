@@ -1,7 +1,8 @@
 [
   {
     "name": "amazon.com Filter",
-    "filter": "amazon.com"
+    "filter": "amazon.com",
+    "action": "Delete"
   },
   {
     "name": "inspiringquotes.com Filter",
@@ -21,6 +22,16 @@
   {
     "name": "updates.activision.com Filter",
     "filter": "updates.activision.com",
+    "action": "Delete"
+  },
+  {
+    "name": "linkedin.com Filter",
+    "filter": "linkedin.com",
+    "action": "Delete"
+  },
+  {
+    "name": "g.factor75.com Filter",
+    "filter": "g.factor75.com",
     "action": "Delete"
   }
 ]

@@ -1,7 +1,7 @@
 
 import sys
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QListWidget, QLabel, QAbstractItemView
-from gmail_client import GmailClient
+from email_manager import EmailManager
 
 class EmailViewer(QWidget):
     def __init__(self):
@@ -24,17 +24,14 @@ class EmailViewer(QWidget):
         layout.addWidget(self.email_list)
 
         self.setLayout(layout)
-        self.client = None
+        self.manager = EmailManager()
         self.emails_data = []  # Store full email data
 
     def load_emails(self):
         self.status_label.setText("Loading emails...")
         QApplication.processEvents()
         try:
-            self.client = GmailClient()
-            self.client.load_credentials()
-            self.client.connect_imap()
-            emails = self.client.list_emails()
+            emails = self.manager.load_emails()
             self.email_list.clear()
             self.emails_data = []
             for email in emails:
@@ -44,9 +41,6 @@ class EmailViewer(QWidget):
             self.status_label.setText(f"Loaded {len(emails)} emails.")
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
-        finally:
-            if self.client:
-                self.client.logout()
 
     def show_email_in_browser(self, item):
         idx = self.email_list.row(item)
@@ -55,15 +49,12 @@ class EmailViewer(QWidget):
         email_info = self.emails_data[idx]
         # Fetch full email content
         try:
-            self.client = GmailClient()
-            self.client.load_credentials()
-            self.client.connect_imap()
-            # Ensure mailbox is selected before fetching
-            if hasattr(self.client, 'imap') and self.client.imap:
-                self.client.imap.select('INBOX')
-            # Get UID and fetch full message
+            self.manager.client.load_credentials()
+            self.manager.client.connect_imap()
+            if hasattr(self.manager.client, 'imap') and self.manager.client.imap:
+                self.manager.client.imap.select('INBOX')
             uid = email_info['uid'].encode()
-            msg = self.client._fetch_email(uid)
+            msg = self.manager.client._fetch_email(uid)
             html_body = None
             if msg.is_multipart():
                 for part in msg.walk():
@@ -75,7 +66,6 @@ class EmailViewer(QWidget):
                     html_body = msg.get_payload(decode=True).decode(errors="ignore")
             if not html_body:
                 html_body = "<pre>" + (msg.get_payload(decode=True).decode(errors="ignore") if msg.get_payload(decode=True) else "No HTML content.") + "</pre>"
-            # Write to temp file and open in browser
             import tempfile, webbrowser
             with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8") as f:
                 f.write(html_body)
@@ -84,8 +74,7 @@ class EmailViewer(QWidget):
         except Exception as e:
             self.status_label.setText(f"Error displaying email: {e}")
         finally:
-            if self.client:
-                self.client.logout()
+            self.manager.client.logout()
 
 def main():
     app = QApplication(sys.argv)

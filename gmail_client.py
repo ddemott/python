@@ -30,7 +30,7 @@ class GmailConnector:
                 self.imap = None
 
     def list_emails(self, mailbox="INBOX", limit=None):
-        """List emails from the mailbox. Returns a list of dicts with 'from', 'date', 'subject', 'uid'."""
+        """List emails from the mailbox. Returns a list of dicts with 'from', 'date', 'subject', 'uid'. Only fetches headers for speed."""
         if not self.imap:
             raise RuntimeError("IMAP connection not established.")
         self.imap.select(mailbox)
@@ -42,14 +42,15 @@ class GmailConnector:
             uids = uids[-limit:]
         emails = []
         for uid in reversed(uids):
-            typ, msg_data = self.imap.fetch(uid, "(RFC822)")
+            typ, msg_data = self.imap.fetch(uid, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
             if typ != "OK":
                 continue
-            msg = email.message_from_bytes(msg_data[0][1])
+            # msg_data[0][1] is the raw header bytes
+            headers = email.message_from_bytes(msg_data[0][1])
             emails.append({
-                "from": msg.get("From", ""),
-                "date": msg.get("Date", ""),
-                "subject": msg.get("Subject", ""),
+                "from": headers.get("From", ""),
+                "date": headers.get("Date", ""),
+                "subject": headers.get("Subject", ""),
                 "uid": uid.decode() if isinstance(uid, bytes) else str(uid)
             })
         return emails
