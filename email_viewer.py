@@ -3,6 +3,42 @@ import sys
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QListWidget, QLabel, QAbstractItemView
 from email_manager import EmailManager
 
+
+# New EmailManager class for business logic
+class EmailManager:
+    def __init__(self):
+        from gmail_client import GmailConnector
+        self.client = GmailConnector()
+
+    def load_emails(self):
+        self.client.load_credentials()
+        self.client.connect_imap()
+        emails = self.client.list_emails(limit=1000)
+        self.client.logout()
+        return emails
+
+    def fetch_email_html(self, email_info):
+        self.client.load_credentials()
+        self.client.connect_imap()
+        if hasattr(self.client, 'imap') and self.client.imap:
+            self.client.imap.select('INBOX')
+        uid = email_info['uid'].encode()
+        msg = self.client._fetch_email(uid)
+        html_body = None
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/html":
+                    html_body = part.get_payload(decode=True).decode(errors="ignore")
+                    break
+        else:
+            if msg.get_content_type() == "text/html":
+                html_body = msg.get_payload(decode=True).decode(errors="ignore")
+        if not html_body:
+            html_body = "<pre>" + (msg.get_payload(decode=True).decode(errors="ignore") if msg.get_payload(decode=True) else "No HTML content.") + "</pre>"
+        self.client.logout()
+        return html_body
+
+# GUI class uses EmailManager for all business logic
 class EmailViewer(QWidget):
     def __init__(self):
         super().__init__()
@@ -16,7 +52,6 @@ class EmailViewer(QWidget):
         self.load_button = QPushButton("Load Emails")
         self.load_button.clicked.connect(self.load_emails)
         layout.addWidget(self.load_button)
-
 
         self.email_list = QListWidget()
         self.email_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -47,25 +82,8 @@ class EmailViewer(QWidget):
         if idx < 0 or idx >= len(self.emails_data):
             return
         email_info = self.emails_data[idx]
-        # Fetch full email content
         try:
-            self.manager.client.load_credentials()
-            self.manager.client.connect_imap()
-            if hasattr(self.manager.client, 'imap') and self.manager.client.imap:
-                self.manager.client.imap.select('INBOX')
-            uid = email_info['uid'].encode()
-            msg = self.manager.client._fetch_email(uid)
-            html_body = None
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() == "text/html":
-                        html_body = part.get_payload(decode=True).decode(errors="ignore")
-                        break
-            else:
-                if msg.get_content_type() == "text/html":
-                    html_body = msg.get_payload(decode=True).decode(errors="ignore")
-            if not html_body:
-                html_body = "<pre>" + (msg.get_payload(decode=True).decode(errors="ignore") if msg.get_payload(decode=True) else "No HTML content.") + "</pre>"
+            html_body = self.manager.fetch_email_html(email_info)
             import tempfile, webbrowser
             with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8") as f:
                 f.write(html_body)
@@ -73,8 +91,6 @@ class EmailViewer(QWidget):
             webbrowser.open(temp_path)
         except Exception as e:
             self.status_label.setText(f"Error displaying email: {e}")
-        finally:
-            self.manager.client.logout()
 
 def main():
     app = QApplication(sys.argv)

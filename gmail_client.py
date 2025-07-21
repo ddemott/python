@@ -1,9 +1,25 @@
 
+
 import json
+import os
 import imaplib
 import email
 
 class GmailConnector:
+    EMAIL_CACHE_FILE = "email_headers_cache.json"
+
+    def load_email_cache(self):
+        if os.path.exists(self.EMAIL_CACHE_FILE):
+            with open(self.EMAIL_CACHE_FILE, "r", encoding="utf-8") as f:
+                try:
+                    return json.load(f)
+                except Exception:
+                    return []
+        return []
+
+    def save_email_cache(self, emails):
+        with open(self.EMAIL_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(emails, f, indent=2)
     def __init__(self, credentials_path="credentials.json"):
         self.imap = None
         self.email = None
@@ -29,8 +45,12 @@ class GmailConnector:
             finally:
                 self.imap = None
 
-    def list_emails(self, mailbox="INBOX", limit=None):
-        """List emails from the mailbox. Returns a list of dicts with 'from', 'date', 'subject', 'uid'. Only fetches headers for speed."""
+    def list_emails(self, mailbox="INBOX", limit=None, use_cache=True):
+        """List emails from the mailbox. Returns a list of dicts with 'from', 'date', 'subject', 'uid'. Only fetches headers for speed. Uses cache if available."""
+        if use_cache:
+            cached = self.load_email_cache()
+        else:
+            cached = []
         if not self.imap:
             raise RuntimeError("IMAP connection not established.")
         self.imap.select(mailbox)
@@ -40,23 +60,36 @@ class GmailConnector:
         uids = data[0].split()
         if limit is not None:
             uids = uids[-limit:]
-        emails = []
-        for uid in reversed(uids):
+        # Find the highest UID in cache
+        cached_uids = set(e["uid"] for e in cached)
+        new_uids = [uid for uid in reversed(uids) if (uid.decode() if isinstance(uid, bytes) else str(uid)) not in cached_uids]
+        emails = list(cached)  # Start with cached emails
+        # Only fetch new headers
+        for uid in new_uids:
             typ, msg_data = self.imap.fetch(uid, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
             if typ != "OK":
                 continue
-            # msg_data[0][1] is the raw header bytes
             headers = email.message_from_bytes(msg_data[0][1])
-            emails.append({
+            emails.insert(0, {  # insert at front to keep order
                 "from": headers.get("From", ""),
                 "date": headers.get("Date", ""),
                 "subject": headers.get("Subject", ""),
                 "uid": uid.decode() if isinstance(uid, bytes) else str(uid)
             })
+        # If limit is set, trim to limit
+        if limit is not None:
+            emails = emails[:limit]
+        # Save updated cache
+        if use_cache:
+            self.save_email_cache(emails)
         return emails
+
 
     def _fetch_email(self, uid):
         typ, msg_data = self.imap.fetch(uid, "(RFC822)")
         if typ != "OK":
             return None
         return email.message_from_bytes(msg_data[0][1])
+
+# Alias for backward compatibility with tests
+GmailClient = GmailConnector

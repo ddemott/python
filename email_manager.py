@@ -12,24 +12,6 @@ class EmailManager:
         self.emails_data = []
         self._emails_data_buffer = None
 
-    def load_emails(self, limit=1000):
-        self.client.load_credentials()
-        self.client.connect_imap()
-        emails = self.client.list_emails(limit=limit)
-        self.emails_data = emails
-        self._emails_data_buffer = list(emails)
-        self.client.logout()
-        return emails
-
-    def filter_emails(self, regex):
-        if self._emails_data_buffer is not None:
-            source_emails = self._emails_data_buffer
-        else:
-            source_emails = self.emails_data
-        filtered = [e for e in source_emails if self.email_matches_regex(e, regex)]
-        self.emails_data = filtered
-        return filtered
-
     def delete_emails_by_uid_list(self, uid_list, permanent=False):
         if not uid_list:
             print("[DEBUG] No UIDs provided for deletion.")
@@ -38,51 +20,67 @@ class EmailManager:
         self.client.connect_imap()
         trash_mailbox = '[Gmail]/Trash'
         def to_ascii(uid):
+            # Always convert to string, skip empty/None
+            if uid is None:
+                return None
             if isinstance(uid, bytes):
                 return uid.decode('ascii')
             return str(uid)
+        # Print all UIDs received for deletion
+        print(f"[DEBUG] UIDs received for deletion: {uid_list}")
         try:
+            # Always select INBOX before any IMAP commands
+            sel_result, sel_data = self.client.imap.select('INBOX')
+            print(f"[DEBUG] SELECT INBOX before delete: {sel_result}, {sel_data}")
+            # Convert all UIDs to strings and filter out invalid/empty ones
+            uid_str_list = []
+            for uid in uid_list:
+                uid_str = to_ascii(uid)
+                # Only accept non-empty, digit-only UIDs (IMAP expects numbers)
+                if uid_str and uid_str.isdigit():
+                    uid_str_list.append(uid_str)
+                else:
+                    print(f"[WARNING] Skipping invalid UID: {uid} -> {uid_str}")
+            print(f"[DEBUG] UIDs sent to IMAP: {uid_str_list}")
+            def debug_imap_command(cmd, *args):
+                print(f"[IMAP-CMD] {cmd} args: {args}")
             if permanent:
                 print(f"[DEBUG] Permanent delete: moving to Trash, then expunging in Trash.")
                 # Move to Trash
-                for uid in uid_list:
-                    uid_str = to_ascii(uid)
+                for uid_str in uid_str_list:
+                    debug_imap_command('COPY', uid_str, trash_mailbox)
                     result, data = self.client.imap.uid('COPY', uid_str, trash_mailbox)
                     print(f"[DEBUG] COPY UID {uid_str} to Trash: {result}, {data}")
                     if result != 'OK':
                         raise Exception(f"IMAP UID COPY to Trash failed for UID {uid_str}: {data}")
                 # Mark as deleted in INBOX
-                sel_result, sel_data = self.client.imap.select('INBOX')
-                print(f"[DEBUG] SELECT INBOX: {sel_result}, {sel_data}")
-                for uid in uid_list:
-                    uid_str = to_ascii(uid)
+                for uid_str in uid_str_list:
+                    debug_imap_command('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
                     result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
                     print(f"[DEBUG] STORE (INBOX) UID {uid_str}: {result}, {data}")
+                debug_imap_command('EXPUNGE')
                 expunge_result, expunge_data = self.client.imap.expunge()
                 print(f"[DEBUG] EXPUNGE INBOX: {expunge_result}, {expunge_data}")
                 # Now expunge all in Trash
                 sel_result, sel_data = self.client.imap.select(trash_mailbox)
                 print(f"[DEBUG] SELECT Trash: {sel_result}, {sel_data}")
-                for uid in uid_list:
-                    uid_str = to_ascii(uid)
+                for uid_str in uid_str_list:
+                    debug_imap_command('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
                     result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
                     print(f"[DEBUG] STORE (Trash) UID {uid_str}: {result}, {data}")
+                debug_imap_command('EXPUNGE')
                 expunge_result, expunge_data = self.client.imap.expunge()
                 print(f"[DEBUG] EXPUNGE Trash: {expunge_result}, {expunge_data}")
             else:
                 print(f"[DEBUG] Standard delete: moving to Trash only.")
-                for uid in uid_list:
-                    uid_str = to_ascii(uid)
+                for uid_str in uid_str_list:
+                    debug_imap_command('COPY', uid_str, trash_mailbox)
                     result, data = self.client.imap.uid('COPY', uid_str, trash_mailbox)
                     print(f"[DEBUG] COPY UID {uid_str} to Trash: {result}, {data}")
                     if result != 'OK':
                         raise Exception(f"IMAP UID COPY to Trash failed for UID {uid_str}: {data}")
-                sel_result, sel_data = self.client.imap.select('INBOX')
-                print(f"[DEBUG] SELECT INBOX: {sel_result}, {sel_data}")
-                for uid in uid_list:
-                    uid_str = to_ascii(uid)
-                    result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
-                    print(f"[DEBUG] STORE (INBOX) UID {uid_str}: {result}, {data}")
+                for uid_str in uid_str_list:  
+                    result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'(\Deleted)')
                 expunge_result, expunge_data = self.client.imap.expunge()
                 print(f"[DEBUG] EXPUNGE INBOX: {expunge_result}, {expunge_data}")
         except Exception as e:
@@ -92,7 +90,7 @@ class EmailManager:
             self.client.logout()
         # Remove from in-memory lists
         self.emails_data = [e for e in self.emails_data if to_ascii(e.get('uid')) not in [to_ascii(u) for u in uid_list]]
-        if self._emails_data_buffer is not None:
+        if hasattr(self, '_emails_data_buffer') and self._emails_data_buffer is not None:
             self._emails_data_buffer = [e for e in self._emails_data_buffer if to_ascii(e.get('uid')) not in [to_ascii(u) for u in uid_list]]
         else:
             self._emails_data_buffer = [e for e in self.emails_data]

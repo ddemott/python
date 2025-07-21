@@ -33,5 +33,25 @@
     "name": "g.factor75.com Filter",
     "filter": "g.factor75.com",
     "action": "Delete"
+  },
+  {
+    "name": "nationaldisabilityassistance.org Filter",
+    "filter": "nationaldisabilityassistance.org",
+    "action": "Delete"
+  },
+  {
+    "name": "email3.gog.com Filter",
+    "filter": "email3.gog.com",
+    "action": "Delete"
+  },
+  {
+    "name": "user.dice.com Filter",
+    "filter": "user.dice.com",
+    "action": "Delete"
+  },
+  {
+    "name": "email.peacocktv.com Filter",
+    "filter": "email.peacocktv.com",
+    "action": "Delete"
   }
 ]

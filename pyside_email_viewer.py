@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QMessageBox, QComboBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal
+from email_manager import EmailManager
 
 from gmail_client import GmailConnector as GmailClient
 
@@ -60,17 +61,11 @@ class FilterDialog(QDialog):
                 for domain in sorted(domains):
                     filter_name = f"{domain} Filter"
                     regex = domain
-                    new_label = f"{filter_name}: {regex}"
-                    new_item = QListWidgetItem(new_label)
-                    self.filter_list.insertItem(0, new_item)
-                    self.filter_list.setCurrentItem(new_item)
+                    # Only update the UI fields, do not add to list or save
                     self.name_edit.setText(filter_name)
+                    self.regex_edit.setText(regex)
                     self.editing_index = None
                     self.rule_label.setText(f"Selected Filter: {filter_name}")
-                    # Immediately add and save the generated filter if not duplicate
-                    if not any(f["name"] == filter_name and f["filter"] == regex for f in self.filters):
-                        self.filters.append({"name": filter_name, "filter": regex, "action": self.action_combo.currentText() if hasattr(self, 'action_combo') else "Delete"})
-                        self.save_filters()
             else:
                 self.new_filter()
         else:
@@ -103,6 +98,13 @@ class FilterDialog(QDialog):
         self.name_edit.setPlaceholderText("Enter filter name")
         name_row.addWidget(name_label)
         name_row.addWidget(self.name_edit)
+        # Print the first email loaded for deep debug
+        if self.selected_emails and len(self.selected_emails) > 0:
+            print("[DEEPDEBUG] First email loaded (full dict):")
+            print(json.dumps(self.selected_emails[0], indent=2))
+            print(f"[DEEPDEBUG] Keys: {list(self.selected_emails[0].keys())}")
+            for k, v in self.selected_emails[0].items():
+                print(f"    {k}: {v}")
         main_layout.addLayout(name_row)
 
         regex_row = QHBoxLayout()
@@ -435,11 +437,20 @@ class FilterDialog(QDialog):
 
     def load_jobs(self):
         jobs_file = "jobs.json"
+        jobs = []
         if os.path.exists(jobs_file):
             with open(jobs_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return []
-
+                jobs = json.load(f)
+        # Deep debug: print first email loaded if available
+        parent = self.parent()
+        emails_data = getattr(parent, "emails_data", None)
+        if emails_data and len(emails_data) > 0:
+            print("[DEEPDEBUG] First email loaded (full dict):")
+            print(json.dumps(emails_data[0], indent=2))
+            print(f"[DEEPDEBUG] Keys: {list(emails_data[0].keys())}")
+            for k, v in emails_data[0].items():
+                print(f"    {k}: {v}")
+        return jobs
     def save_jobs(self, jobs):
         jobs_file = "jobs.json"
         with open(jobs_file, "w", encoding="utf-8") as f:
@@ -514,6 +525,12 @@ class FilterDialog(QDialog):
             item_text = selected_items[0].text()
             if ":" in item_text:
                 regex = item_text.rsplit(":", 1)[1].strip()
+        # If regex is still empty, use the value from the regex_edit field
+        if not regex:
+            regex = self.regex_edit.text().strip()
+        if not regex:
+            QMessageBox.warning(self, "Save Filter", "Please enter a regex for the filter.")
+            return
         if self.editing_index is not None:
             self.filters[self.editing_index]["name"] = name
             self.filters[self.editing_index]["action"] = action
@@ -521,18 +538,41 @@ class FilterDialog(QDialog):
             self.save_filters()
             self.refresh_filter_list()
             self.update_original_filter_items()
+            # Remove <New Filter> placeholder if present
+            for i in reversed(range(self.filter_list.count())):
+                item = self.filter_list.item(i)
+                if item.text().startswith("<New Filter>:"):
+                    self.filter_list.takeItem(i)
+            # Select the updated filter in the list
+            for i in range(self.filter_list.count()):
+                item = self.filter_list.item(i)
+                if item.text().startswith(f"{name}:"):
+                    self.filter_list.setCurrentItem(item)
+                    break
             QMessageBox.information(self, "Save Filter", "Filter updated.")
             self.editing_index = None
         else:
-            # Add new filter
-            for f in self.filters:
+            # Check for duplicate in file, not just in-memory list
+            file_filters = self.load_filters()
+            for f in file_filters:
                 if f["name"] == name:
-                    QMessageBox.warning(self, "Save Filter", "A filter with this name already exists. Select it to edit.")
+                    QMessageBox.warning(self, "Save Filter", "A filter with this name already exists in the file. Select it to edit.")
                     return
             self.filters.append({"name": name, "filter": regex, "action": action})
             self.save_filters()
             self.refresh_filter_list()
             self.update_original_filter_items()
+            # Remove <New Filter> placeholder if present
+            for i in reversed(range(self.filter_list.count())):
+                item = self.filter_list.item(i)
+                if item.text().startswith("<New Filter>:"):
+                    self.filter_list.takeItem(i)
+            # Select the newly added filter in the list
+            for i in range(self.filter_list.count()):
+                item = self.filter_list.item(i)
+                if item.text().startswith(f"{name}:"):
+                    self.filter_list.setCurrentItem(item)
+                    break
             QMessageBox.information(self, "Save Filter", "New filter created.")
         if hasattr(self.parent(), "email_table"):
             self.parent().email_table.clearSelection()
@@ -576,22 +616,26 @@ class FilterDialog(QDialog):
         self.save_filters()
 
     def load_filters(self):
-        if os.path.exists(FILTERS_FILE):
-            with open(FILTERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+        # Use parent's method for consistency
+        if hasattr(self.parent(), 'load_filters'):
+            return self.parent().load_filters()
         return []
 
     def save_filters(self):
-        try:
-            abs_path = os.path.abspath(FILTERS_FILE)
-            print(f"[DEBUG] Saving filters to: {abs_path}")
-            print(f"[DEBUG] Filters data: {json.dumps(self.filters, indent=2)}")
-            with open(FILTERS_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.filters, f, indent=2)
-            print("[DEBUG] Save successful.")
-        except Exception as e:
-            print(f"[ERROR] Failed to save filters: {e}")
-            QMessageBox.critical(self, "Save Error", f"Failed to save filters: {e}")
+        # Use parent's method for consistency
+        if hasattr(self.parent(), 'save_filters'):
+            self.parent().save_filters(self.filters)
+        else:
+            try:
+                abs_path = os.path.abspath(FILTERS_FILE)
+                print(f"[DEBUG] Saving filters to: {abs_path}")
+                print(f"[DEBUG] Filters data: {json.dumps(self.filters, indent=2)}")
+                with open(FILTERS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(self.filters, f, indent=2)
+                print("[DEBUG] Save successful.")
+            except Exception as e:
+                print(f"[ERROR] Failed to save filters: {e}")
+                QMessageBox.critical(self, "Save Error", f"Failed to save filters: {e}")
 
 class DateTableWidgetItem(QTableWidgetItem):
     def __init__(self, date_str):
@@ -683,172 +727,58 @@ class ManageRulesDialog(QDialog):
         self.parent.save_rules(self.rules)
 
 class EmailViewer(QWidget):
-    def delete_emails_by_uid_list(self, uid_list, permanent=False):
-        print(f"[DEEPDEBUG] delete_emails_by_uid_list called with: {uid_list}, permanent={permanent}")
-        if not uid_list:
-            print("[DEEPDEBUG] No UIDs provided to delete_emails_by_uid_list")
-            return
-        def to_ascii(uid):
-            # Ensure UID is a string of digits only
-            if isinstance(uid, bytes):
-                uid = uid.decode('ascii')
-            return str(uid).strip()
+    def load_filters(self):
+        if os.path.exists(FILTERS_FILE):
+            with open(FILTERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+
+    def save_filters(self, filters):
         try:
-            self.client = GmailClient()
-            self.client.load_credentials()
-            self.client.connect_imap()
-            if hasattr(self.client, 'imap') and self.client.imap:
-                trash_mailbox = '[Gmail]/Trash'
-                # Always select INBOX before any COPY or STORE
-                sel_result, sel_data = self.client.imap.select('INBOX')
-                print(f"[DEBUG] SELECT INBOX (before COPY): {sel_result}, {sel_data}")
-                if permanent:
-                    print(f"[DEBUG] Permanent delete: moving to Trash, then expunging in Trash.")
-                    for uid in uid_list:
-                        uid_str = to_ascii(uid)
-                        result, data = self.client.imap.uid('COPY', uid_str, trash_mailbox)
-                        print(f"[DEBUG] COPY UID {uid_str} to Trash: {result}, {data}")
-                        if result != 'OK':
-                            raise Exception(f"IMAP UID COPY to Trash failed for UID {uid_str}: {data}")
-                    # INBOX is already selected
-                    for uid in uid_list:
-                        uid_str = to_ascii(uid)
-                        result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', '(\\Deleted)')
-                        print(f"[DEBUG] STORE (INBOX) UID {uid_str}: {result}, {data}")
-                    expunge_result, expunge_data = self.client.imap.expunge()
-                    print(f"[DEBUG] EXPUNGE INBOX: {expunge_result}, {expunge_data}")
-                    sel_result, sel_data = self.client.imap.select(trash_mailbox)
-                    print(f"[DEBUG] SELECT Trash: {sel_result}, {sel_data}")
-                    for uid in uid_list:
-                        uid_str = to_ascii(uid)
-                        result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', '(\\Deleted)')
-                        print(f"[DEBUG] STORE (Trash) UID {uid_str}: {result}, {data}")
-                    expunge_result, expunge_data = self.client.imap.expunge()
-                    print(f"[DEBUG] EXPUNGE Trash: {expunge_result}, {expunge_data}")
-                else:
-                    print(f"[DEBUG] Standard delete: moving to Trash only.")
-                    for uid in uid_list:
-                        uid_str = to_ascii(uid)
-                        result, data = self.client.imap.uid('COPY', uid_str, trash_mailbox)
-                        print(f"[DEBUG] COPY UID {uid_str} to Trash: {result}, {data}")
-                        if result != 'OK':
-                            raise Exception(f"IMAP UID COPY to Trash failed for UID {uid_str}: {data}")
-                    # INBOX is already selected
-                    for uid in uid_list:
-                        uid_str = to_ascii(uid)
-                        result, data = self.client.imap.uid('STORE', uid_str, '+FLAGS', r'(\\Deleted)')
-                        print(f"[DEBUG] STORE (INBOX) UID {uid_str}: {result}, {data}")
-                    expunge_result, expunge_data = self.client.imap.expunge()
-                    print(f"[DEBUG] EXPUNGE INBOX: {expunge_result}, {expunge_data}")
+            abs_path = os.path.abspath(FILTERS_FILE)
+            print(f"[DEBUG] Saving filters to: {abs_path}")
+            print(f"[DEBUG] Filters data: {json.dumps(filters, indent=2)}")
+            with open(FILTERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(filters, f, indent=2)
+            print("[DEBUG] Save successful.")
         except Exception as e:
-            print(f"[ERROR] Exception during delete_emails_by_uid_list: {e}")
-            raise
-        finally:
-            if hasattr(self, 'client') and self.client:
-                self.client.logout()
-        # Remove from in-memory lists
-        ascii_uid_list = [to_ascii(u) for u in uid_list]
-        self.emails_data = [e for e in self.emails_data if to_ascii(e.get('uid')) not in ascii_uid_list]
-        if self._emails_data_buffer is not None:
-            self._emails_data_buffer = [e for e in self._emails_data_buffer if to_ascii(e.get('uid')) not in ascii_uid_list]
-        else:
-            self._emails_data_buffer = [e for e in self.emails_data]
-        print(f"[DEBUG] After deletion, emails_data: {self.emails_data}")
-        print(f"[DEBUG] After deletion, _emails_data_buffer: {self._emails_data_buffer}")
-        if hasattr(self, 'email_table'):
-            self.email_table.setUpdatesEnabled(False)
-            self.email_table.setSortingEnabled(False)
-            self.email_table.clearContents()
-            self.email_table.setRowCount(len(self.emails_data))
-            for row_position, email in enumerate(self.emails_data):
-                self.set_email_row(row_position, email)
-            self.email_table.setUpdatesEnabled(True)
-            self.email_table.setSortingEnabled(True)
-            self.email_table.sortItems(1, Qt.DescendingOrder)
-        if hasattr(self, 'status_label'):
-            self.status_label.setText(f"Deleted {len(uid_list)} email(s) via job.")
-    @staticmethod
-    def email_matches_regex(email, regex):
+            print(f"[ERROR] Failed to save filters: {e}")
+            QMessageBox.critical(self, "Save Error", f"Failed to save filters: {e}")
+    def apply_filter_to_emails(self, regex):
         """
-        Returns True if the email matches the regex or substring in any of the relevant fields.
+        Filter emails_data by regex (on 'from', 'subject', or 'date') and update the table.
         """
         import re
         if not regex:
-            return True
-        from_field = str(email.get('from', ''))
-        subject_field = str(email.get('subject', ''))
-        # Try to decode subject if encoded
-        try:
-            from email.header import decode_header
-            def decode_str(s):
-                parts = decode_header(s)
-                return ''.join([t[0].decode(t[1] or 'utf-8') if isinstance(t[0], bytes) else t[0] for t in parts])
-            subject_field_decoded = decode_str(subject_field)
-        except Exception:
-            subject_field_decoded = subject_field
-        email_match = re.search(r'<([^>]+)>', from_field)
-        email_addr = email_match.group(1) if email_match else from_field
-        display_name = from_field.split('<')[0].strip() if '<' in from_field else from_field
-        # Substring match (case-insensitive)
-        for field in [from_field, email_addr, display_name, subject_field_decoded]:
-            if regex.lower() in field.lower():
-                return True
-        # Regex match (case-insensitive)
-        try:
+            # Restore full list
+            filtered = self._emails_data_buffer if self._emails_data_buffer is not None else self.emails_data
+        else:
             pattern = re.compile(regex, re.IGNORECASE)
-        except re.error:
-            return False
-        for field in [from_field, email_addr, display_name, subject_field_decoded]:
-            if pattern.search(field):
-                return True
-        return False
-    def delete_selected_emails(self, permanent=False):
-        print("[DEEPDEBUG] delete_selected_emails called")
-        selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
-        print(f"[DEEPDEBUG] Selected rows: {selected_rows}")
-        if not selected_rows:
-            print("[DEEPDEBUG] No emails selected to delete.")
-            self.status_label.setText("No emails selected to delete.")
-            return
-        uids_to_delete = []
-        for row in selected_rows:
-            uid = self.email_table.item(row, 0).data(Qt.UserRole)
-            print(f"[DEEPDEBUG] Row {row} UID: {uid}")
-            if uid:
-                uids_to_delete.append(uid)
-        print(f"[DEEPDEBUG] UIDs to delete: {uids_to_delete}")
-        if not uids_to_delete:
-            print("[DEEPDEBUG] No valid UIDs found for deletion.")
-            self.status_label.setText("No valid UIDs found for deletion.")
-            return
-        # Confirm deletion
-        reply = QMessageBox.question(self, "Delete Emails", f"Are you sure you want to delete {len(uids_to_delete)} selected email(s)? This cannot be undone.", QMessageBox.Yes | QMessageBox.No)
-        print(f"[DEEPDEBUG] User confirmation reply: {reply}")
-        if reply != QMessageBox.Yes:
-            print("[DEEPDEBUG] User cancelled deletion.")
-            return
-        # Move to Trash and optionally expunge for permanent delete
-        self.delete_emails_by_uid_list(uids_to_delete, permanent=permanent)
-        self.status_label.setText(f"Deleted {len(uids_to_delete)} email(s).")
+            filtered = [e for e in (self._emails_data_buffer if self._emails_data_buffer is not None else self.emails_data)
+                        if pattern.search(str(e.get('from', ''))) or pattern.search(str(e.get('subject', ''))) or pattern.search(str(e.get('date', '')))]
+        self.emails_data = filtered
+        self.email_table.setRowCount(len(filtered))
+        for row_position, email in enumerate(filtered):
+            self.set_email_row(row_position, email)
+        self.status_label.setText(f"Filtered: {len(filtered)} emails match '{regex}'" if regex else f"Showing all emails.")
     def read_selected_emails(self):
-        selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
-        if not selected_rows:
+        selected = self.get_selected_emails()
+        if not selected:
             self.status_label.setText("No emails selected to read.")
             return
-        for row in selected_rows:
-            uid = self.email_table.item(row, 0).data(Qt.UserRole)
+        errors = []
+        for email_info in selected:
+            uid = email_info.get('uid')
             if not uid:
-                continue
-            email_info = next((e for e in self.emails_data if e.get('uid') == uid), None)
-            if not email_info:
+                errors.append("Could not find UID for an email.")
                 continue
             try:
-                self.client = GmailClient()
-                self.client.load_credentials()
-                self.client.connect_imap()
-                if hasattr(self.client, 'imap') and self.client.imap:
-                    self.client.imap.select('INBOX')
-                msg = self.client._fetch_email(uid.encode())
+                client = GmailClient()
+                client.load_credentials()
+                client.connect_imap()
+                if hasattr(client, 'imap') and client.imap:
+                    client.imap.select('INBOX')
+                msg = client._fetch_email(uid.encode())
                 html_body = self.extract_html_body(msg)
                 import tempfile, webbrowser
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8") as f:
@@ -856,75 +786,157 @@ class EmailViewer(QWidget):
                     temp_path = f.name
                 webbrowser.open(temp_path)
             except Exception as e:
-                self.status_label.setText(f"Error displaying email: {e}")
+                errors.append(f"Error displaying email UID {uid}: {e}")
             finally:
-                if self.client:
-                    self.client.logout()
-    def apply_filter_to_emails(self, regex):
-        """
-        Filter emails in the table by the given regex (applies to the 'From' field, extracted email address, display name, and subject).
-        Always filter from the full email cache (_emails_data_buffer).
-        """
-        print(f"[DEBUG] Filtering with regex: '{regex}'")
-        source_emails = self._emails_data_buffer if self._emails_data_buffer is not None else self.emails_data
-        filtered_emails = []
-        for email in source_emails:
-            match = EmailViewer.email_matches_regex(email, regex)
-            # For debug parity with old code:
-            from_field = str(email.get('from', ''))
-            subject_field = str(email.get('subject', ''))
-            email_match = re.search(r'<([^>]+)>', from_field)
-            email_addr = email_match.group(1) if email_match else from_field
-            display_name = from_field.split('<')[0].strip() if '<' in from_field else from_field
-            if regex:
-                try:
-                    pattern = re.compile(regex, re.IGNORECASE)
-                except re.error:
-                    print(f"[ERROR] Invalid regex: {regex}")
-                    QMessageBox.warning(self, "Invalid Regex", f"The filter regex is invalid: {regex}")
-                    return
-                from_match = pattern.search(from_field)
-                email_addr_match = pattern.search(email_addr)
-                display_name_match = pattern.search(display_name)
-                subject_match = pattern.search(subject_field)
-            else:
-                from_match = email_addr_match = display_name_match = subject_match = True
-            print(f"[DEBUG] Email FROM: '{from_field}' | EMAIL: '{email_addr}' | DISPLAY: '{display_name}' | SUBJECT: '{subject_field}' | from_match: {from_match is not None} | email_addr_match: {email_addr_match is not None} | display_name_match: {display_name_match is not None} | subject_match: {subject_match is not None}")
-            if match:
-                filtered_emails.append(email)
-        print(f"[DEBUG] Filtered emails count: {len(filtered_emails)}")
-        self.emails_data = filtered_emails
-        self.email_table.setUpdatesEnabled(False)
-        self.email_table.setSortingEnabled(False)
-        self.email_table.clearContents()
-        self.email_table.setRowCount(len(filtered_emails))
-        for row_position, email in enumerate(filtered_emails):
-            print(f"[DEBUG] Setting row {row_position}: {email}")
-            self.set_email_row(row_position, email)
-            item = self.email_table.item(row_position, 0)
-            if item is not None:
-                print(f"[DEBUG] After set: Row {row_position} Col 0 Value: {item.text()} (should be: {email.get('from', '')})")
-            else:
-                print(f"[DEBUG] After set: Row {row_position} Col 0 Value: None (should be: {email.get('from', '')})")
-        self.email_table.setUpdatesEnabled(True)
-        self.email_table.setSortingEnabled(True)
-        self.email_table.sortItems(1, Qt.DescendingOrder)
-        self.status_label.setText(f"Filtered: {len(filtered_emails)} emails.")
+                if 'client' in locals() and client:
+                    client.logout()
+        if errors:
+            self.status_label.setText("; ".join(errors))
+        else:
+            self.status_label.setText(f"Read {len(selected)} emails.")
 
-    def restore_emails(self):
-        """Restore the full email list from the cache and refresh the table."""
-        if self._emails_data_buffer is not None:
-            self.emails_data = list(self._emails_data_buffer)
-            self.email_table.setUpdatesEnabled(False)
-            self.email_table.setSortingEnabled(False)
-            self.email_table.clearContents()
-            self.email_table.setRowCount(len(self.emails_data))
-            for row_position, email in enumerate(self.emails_data):
-                self.set_email_row(row_position, email)
-            self.email_table.setUpdatesEnabled(True)
-            self.email_table.setSortingEnabled(True)
-            self.email_table.sortItems(1, Qt.DescendingOrder)
-            self.status_label.setText(f"Restored: {len(self.emails_data)} emails.")
+    def delete_selected_emails(self, permanent=False):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to delete.")
+            return
+        try:
+            print("[DEEPDEBUG] Selected emails for deletion:")
+            for idx, e in enumerate(selected):
+                print(f"  Email {idx}: {e}")
+                uid = e.get('uid')
+                print(f"    UID type: {type(uid)}, value: {uid}")
+            uid_list = [e.get('uid') for e in selected if e.get('uid')]
+            print(f"[DEEPDEBUG] UID list to delete: {uid_list}")
+            self.manager.delete_emails_by_uid_list(uid_list, permanent=permanent)
+            self.status_label.setText(f"Deleted {len(uid_list)} emails{' permanently' if permanent else ''}.")
+        except Exception as e:
+            self.status_label.setText(f"Error deleting emails: {e}")
+
+    def forward_selected_emails(self):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to forward.")
+            return
+        self.status_label.setText(f"Forwarded {len(selected)} emails.")
+
+    def move_selected_emails(self):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to move.")
+            return
+        # Connect to IMAP and get folder list
+        try:
+            client = GmailClient()
+            client.load_credentials()
+            client.connect_imap()
+            status, folders = client.imap.list()
+            if status != 'OK' or not folders:
+                self.status_label.setText("Could not retrieve folder list from server.")
+                return
+            # Parse folder names from IMAP response
+            folder_names = []
+            for f in folders:
+                parts = f.decode().split(' "/" ')
+                if len(parts) == 2:
+                    folder_names.append(parts[1].strip('"'))
+            if not folder_names:
+                self.status_label.setText("No folders found on server.")
+                return
+        except Exception as e:
+            self.status_label.setText(f"Failed to fetch folders: {e}")
+            return
+        # Prompt user to pick a folder
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QPushButton, QHBoxLayout, QLabel
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select Folder to Move Emails Into")
+        dlg.resize(350, 350)
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Select a folder to move emails into:"))
+        list_widget = QListWidget()
+        for folder in folder_names:
+            list_widget.addItem(folder)
+        layout.addWidget(list_widget)
+        btn_row = QHBoxLayout()
+        move_btn = QPushButton("Move")
+        cancel_btn = QPushButton("Cancel")
+        btn_row.addWidget(move_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+        dlg.setLayout(layout)
+        result = {"ok": False, "folder": None}
+        def accept():
+            sel = list_widget.currentItem()
+            if sel:
+                result["ok"] = True
+                result["folder"] = sel.text()
+                dlg.accept()
+        def reject():
+            dlg.reject()
+        move_btn.clicked.connect(accept)
+        cancel_btn.clicked.connect(reject)
+        if dlg.exec() != QDialog.Accepted or not result["ok"] or not result["folder"]:
+            self.status_label.setText("Move cancelled.")
+            return
+        folder = result["folder"]
+        # Move emails to selected folder
+        errors = []
+        for email_info in selected:
+            uid = email_info.get('uid')
+            if not uid:
+                errors.append("Could not find UID for an email.")
+                continue
+            try:
+                # Copy to folder
+                copy_result, copy_data = client.imap.uid('COPY', uid, folder)
+                if copy_result != 'OK':
+                    errors.append(f"Failed to copy UID {uid} to {folder}: {copy_data}")
+                    continue
+                # Mark as deleted in INBOX
+                store_result, store_data = client.imap.uid('STORE', uid, '+FLAGS', r'(\Deleted)')
+                if store_result != 'OK':
+                    errors.append(f"Failed to mark UID {uid} as deleted: {store_data}")
+            except Exception as e:
+                errors.append(f"Error moving UID {uid}: {e}")
+        # Expunge INBOX to remove deleted
+        try:
+            client.imap.expunge()
+        except Exception as e:
+            errors.append(f"Error expunging INBOX: {e}")
+        finally:
+            client.logout()
+        if errors:
+            self.status_label.setText("; ".join(errors))
+        else:
+            self.status_label.setText(f"Moved {len(selected)} emails to {folder}.")
+
+    def mark_read_selected_emails(self):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to mark as read.")
+            return
+        self.status_label.setText(f"Marked {len(selected)} emails as read.")
+
+    def mark_unread_selected_emails(self):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to mark as unread.")
+            return
+        self.status_label.setText(f"Marked {len(selected)} emails as unread.")
+
+    def mark_important_selected_emails(self):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to mark as important.")
+            return
+        self.status_label.setText(f"Marked {len(selected)} emails as important.")
+
+    def mark_unimportant_selected_emails(self):
+        selected = self.get_selected_emails()
+        if not selected:
+            self.status_label.setText("No emails selected to mark as unimportant.")
+            return
+        self.status_label.setText(f"Marked {len(selected)} emails as unimportant.")
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gmail Email Viewer")
@@ -1014,6 +1026,7 @@ class EmailViewer(QWidget):
         self.read_btn.clicked.connect(self.read_selected_emails)
         self.delete_btn.clicked.connect(self.delete_selected_emails)
         self.perm_delete_btn.clicked.connect(lambda: self.delete_selected_emails(permanent=True))
+        self.move_btn.clicked.connect(self.move_selected_emails)
 
         # Double-click on email row opens in browser
         self.email_table.doubleClicked.connect(self.show_email_in_browser)
@@ -1021,6 +1034,7 @@ class EmailViewer(QWidget):
         self.client = None
         self.emails_data = []
         self._emails_data_buffer = None
+        self.manager = EmailManager()
 
     def open_create_filters(self):
         selected_emails = self.get_selected_emails()
@@ -1058,7 +1072,7 @@ class EmailViewer(QWidget):
         # Print what is actually set in the table
         for col in range(self.email_table.columnCount()):
             item = self.email_table.item(row_position, col)
-            print(f"[DEEPDEBUG] After set: Row {row_position} Col {col} Value: {item.text() if item else None}")
+            print(f"[DEEPDEBUG] After set: Row {row_position} Col {col} Value: {item.text()} (should be: {email.get('from', '')})")
 
     @staticmethod
     def extract_html_body(msg):
@@ -1073,25 +1087,19 @@ class EmailViewer(QWidget):
         return "<pre>" + (payload.decode(errors="ignore") if payload else "No HTML content.") + "</pre>"
 
     def load_emails(self):
-        # Animated loading dots
-        from PySide6.QtCore import QTimer
-        self._loading_anim_timer = getattr(self, '_loading_anim_timer', None)
-        self._loading_anim_count = 0
-        def animate_loading():
-            dots = '.' * (self._loading_anim_count % 4)
-            self.status_label.setText(f"Loading{dots}")
-            self._loading_anim_count += 1
-        if not hasattr(self, '_loading_anim_timer') or self._loading_anim_timer is None:
-            self._loading_anim_timer = QTimer(self)
-            self._loading_anim_timer.timeout.connect(animate_loading)
-        self._loading_anim_count = 0
-        self._loading_anim_timer.start(500)  # 500ms per frame
+        self.status_label.setText("Loading...")
         QApplication.processEvents()
         try:
             self.client = GmailClient()
             self.client.load_credentials()
             self.client.connect_imap()
-            emails = self.client.list_emails(limit=1000)  # Load up to 100 emails for speed
+            # Use cache for speed, only fetch new headers
+            emails = self.client.list_emails(limit=1000, use_cache=True)
+            print("[DEEPDEBUG] Email keys and values for first 5 emails loaded:")
+            for idx, email in enumerate(emails[:5]):
+                print(f"  Email {idx} keys: {list(email.keys())}")
+                for k, v in email.items():
+                    print(f"    {k}: {v}")
             self.email_table.setUpdatesEnabled(False)
             self.email_table.setRowCount(len(emails))
             self.emails_data = emails
@@ -1108,10 +1116,6 @@ class EmailViewer(QWidget):
         finally:
             if self.client:
                 self.client.logout()
-            # Stop animation
-            if hasattr(self, '_loading_anim_timer') and self._loading_anim_timer is not None:
-                self._loading_anim_timer.stop()
-                self._loading_anim_count = 0
 
     def get_selected_emails(self):
         selected_rows = set(idx.row() for idx in self.email_table.selectedIndexes())
