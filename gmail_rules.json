@@ -1,0 +1,184 @@
+[
+  {
+    "name": "robinhood.com Filter",
+    "pattern": "@robinhood\\.com",
+    "field": "from",
+    "created": "2025-07-27 04:19:18",
+    "sample_emails": 2
+  },
+  {
+    "name": "TikTok Shop Filter",
+    "pattern": "TikTok\\ Shop",
+    "field": "from",
+    "created": "2025-07-27 05:32:05",
+    "sample_emails": 3
+  },
+  {
+    "name": "Right to Life Filter",
+    "pattern": "Sarah\\ Michalak\\ \\-\\ Illinois\\ Right\\ to\\ Life",
+    "field": "from",
+    "created": "2025-07-27 05:33:46",
+    "sample_emails": 3
+  },
+  {
+    "name": "Sheep-It Renderfarm Filter",
+    "pattern": "@sheepit\\-renderfarm\\.co",
+    "field": "from",
+    "created": "2025-07-27 05:35:02",
+    "sample_emails": 2
+  },
+  {
+    "name": "Fixd App Filter",
+    "pattern": "@fixdapp\\.com",
+    "field": "from",
+    "created": "2025-07-27 05:37:07",
+    "sample_emails": 4
+  },
+  {
+    "name": "MajorGrossProfit Filter",
+    "pattern": "@e\\.majorgrossprofit",
+    "field": "from",
+    "created": "2025-07-27 05:38:12",
+    "sample_emails": 2
+  },
+  {
+    "name": "Inspiring Quotes Filter",
+    "pattern": "@inspiringquotes\\.com",
+    "field": "from",
+    "created": "2025-07-27 05:38:43",
+    "sample_emails": 2
+  },
+  {
+    "name": "XFinity Filter",
+    "pattern": "@alerts\\.comcast\\.ne",
+    "field": "from",
+    "created": "2025-07-27 05:50:11",
+    "sample_emails": 2
+  },
+  {
+    "name": "ClickNRead Filter",
+    "pattern": "@mail\\.clicknread\\.com",
+    "field": "from",
+    "created": "2025-07-27 05:50:48",
+    "sample_emails": 2
+  },
+  {
+    "name": "Steam Powered Filter",
+    "pattern": "@steampowered\\.com",
+    "field": "from",
+    "created": "2025-07-27 06:03:48",
+    "sample_emails": 2
+  },
+  {
+    "name": "Bible League Org Filter",
+    "pattern": "@bibleleague\\.org",
+    "field": "from",
+    "created": "2025-07-27 06:04:43",
+    "sample_emails": 2
+  },
+  {
+    "name": "Find My Filter",
+    "pattern": "Find\\ My",
+    "field": "from",
+    "created": "2025-07-27 06:10:44",
+    "sample_emails": 3
+  },
+  {
+    "name": "Marianos Email Filter",
+    "pattern": "Mariano's",
+    "field": "from",
+    "created": "2025-07-27 07:44:05",
+    "sample_emails": 7
+  },
+  {
+    "name": "Daily Williams Filter",
+    "pattern": "@daily\\.williamsadvises\\.com",
+    "field": "from",
+    "created": "2025-07-27 19:00:14",
+    "sample_emails": 4
+  },
+  {
+    "name": "mail.park.mobile.io Filter",
+    "pattern": "@mail\\.parkmobile\\.io",
+    "field": "from",
+    "created": "2025-07-28 04:25:15",
+    "sample_emails": 3
+  },
+  {
+    "name": "usesparrow.com Filter",
+    "pattern": "@usesparrow\\.com",
+    "field": "from",
+    "created": "2025-07-28 04:28:01",
+    "sample_emails": 2
+  },
+  {
+    "name": "rawpixel.com Filter",
+    "pattern": "@rawpixel\\.com",
+    "field": "from",
+    "created": "2025-07-28 04:44:05",
+    "sample_emails": 5
+  },
+  {
+    "name": "Classmates.com Filter",
+    "pattern": "Classmates\\.com",
+    "field": "from",
+    "created": "2025-07-28 08:39:41",
+    "sample_emails": 2
+  },
+  {
+    "name": "unroll.me Filter",
+    "pattern": "@unroll\\.me",
+    "field": "from",
+    "created": "2025-07-28 13:52:30",
+    "sample_emails": 2
+  },
+  {
+    "name": "Wendy's Order Filter",
+    "pattern": "@notifications\\.wendys\\.com",
+    "field": "from",
+    "created": "2025-07-28 14:08:59",
+    "sample_emails": 3
+  },
+  {
+    "name": "Spotify.com Filter",
+    "pattern": "@spotify\\.com",
+    "field": "from",
+    "created": "2025-07-28 15:55:23",
+    "sample_emails": 2
+  },
+  {
+    "name": "nationaldisabilityassistance.o Filter",
+    "pattern": "@nationaldisabilityassistance\\.o",
+    "field": "from",
+    "created": "2025-07-28 18:19:54",
+    "sample_emails": 3
+  },
+  {
+    "name": "New Friend Confirmation Filter",
+    "pattern": "new friend confirmation",
+    "field": "subject",
+    "created": "2025-07-30 11:41:30",
+    "sample_emails": 8
+  },
+  {
+    "name": "Don't miss conversations in Java Developers Community",
+    "pattern": "(\\bdon\\b|\\bmiss\\b|\\bconversations\\b)",
+    "field": "subject",
+    "created": "2025-07-30 11:47:06",
+    "sample_emails": 2
+  },
+  {
+    "name": "store-news@amazon.com Filter",
+    "pattern": "store-news@amazon.com",
+    "field": "from",
+    "created": "2025-07-31 07:29:44",
+    "sample_emails": 2
+  },
+  {
+    "name": "Factor 75 Filter",
+    "pattern": "@g\\.factor75\\.com",
+    "field": "from",
+    "created": "2025-07-31 07:50:52",
+    "sample_emails": 2
+  }
+]

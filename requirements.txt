@@ -1,5 +1,0 @@
-PySide6
-google-auth
-google-auth-oauthlib
-imapclient
-email-validator
